@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -33,6 +34,16 @@ const STYLES = [
   },
 ] as const
 
+function withAuto(settings: Settings): Settings {
+  return {
+    ...settings,
+    auto_trade: settings.auto_trade ?? false,
+    auto_wallet_pct: settings.auto_wallet_pct ?? 5,
+    auto_leverage: settings.auto_leverage ?? 5,
+    auto_min_confidence: settings.auto_min_confidence ?? 0,
+  }
+}
+
 export default function SettingsPanel({
   settings,
   onSaved,
@@ -40,17 +51,17 @@ export default function SettingsPanel({
   settings: Settings
   onSaved: (s: Settings) => void
 }) {
-  const [draft, setDraft] = useState<Settings>(settings)
+  const [draft, setDraft] = useState<Settings>(withAuto(settings))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const settingsKey = JSON.stringify(settings)
   useEffect(() => {
-    setDraft(JSON.parse(settingsKey) as Settings)
+    setDraft(withAuto(JSON.parse(settingsKey) as Settings))
   }, [settingsKey])
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
+  const dirty = JSON.stringify(draft) !== JSON.stringify(withAuto(settings))
 
   async function save() {
     setSaving(true)
@@ -78,6 +89,77 @@ export default function SettingsPanel({
       <h2 className="mb-4 text-lg font-semibold">Настройки</h2>
 
       <div className="space-y-6">
+        <div className="rounded-xl border border-primary/40 bg-card p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="font-semibold">Автоторговля на демо</h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Только демо-счёт. Реальные ключи эта настройка не использует. Каждый сигнал
+                открывается один раз: повторно по нему ордер не ставится. Если по паре уже есть
+                позиция, бот её не трогает.
+              </p>
+            </div>
+            <Switch
+              checked={draft.auto_trade}
+              onCheckedChange={(checked) => setDraft({ ...draft, auto_trade: checked })}
+              className="mt-1 cursor-pointer"
+              aria-label="Автоторговля на демо"
+            />
+          </div>
+          <div className="mt-5 grid gap-6 md:grid-cols-2">
+            <div>
+              <div className="mb-2 flex justify-between">
+                <Label>Маржа одной сделки</Label>
+                <span className="font-mono text-sm text-muted-foreground">
+                  {draft.auto_wallet_pct}% кошелька
+                </span>
+              </div>
+              <Slider
+                min={1}
+                max={50}
+                step={1}
+                value={[draft.auto_wallet_pct]}
+                onValueChange={([value]) => setDraft({ ...draft, auto_wallet_pct: value })}
+              />
+            </div>
+            <div>
+              <div className="mb-2 flex justify-between">
+                <Label>Плечо</Label>
+                <span className="font-mono text-sm text-muted-foreground">{draft.auto_leverage}x</span>
+              </div>
+              <Slider
+                min={1}
+                max={50}
+                step={1}
+                value={[draft.auto_leverage]}
+                onValueChange={([value]) => setDraft({ ...draft, auto_leverage: value })}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <div className="mb-2 flex justify-between">
+                <Label>Уверенность сигнала</Label>
+                <span className="font-mono text-sm text-muted-foreground">
+                  от {draft.auto_min_confidence}%
+                </span>
+              </div>
+              <Slider
+                min={0}
+                max={100}
+                step={1}
+                value={[draft.auto_min_confidence]}
+                onValueChange={([value]) => setDraft({ ...draft, auto_min_confidence: value })}
+              />
+            </div>
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            Маржа — это {draft.auto_wallet_pct}% свободного USDT. Объём позиции = маржа ×{' '}
+            {draft.auto_leverage}. Сканер открывает сигнал, когда его уверенность от{' '}
+            {draft.auto_min_confidence}% и выше. Итог берётся из проводок биржи. Когда срок жизни
+            сигнала выходит, плюс на бирже закрывается сразу. Если в этот момент минус, сделка
+            ждёт, пока плюс не станет больше 1% маржи плюс комиссия, которую биржа уже списала.
+          </p>
+        </div>
+
         <div>
           <Label className="mb-2 block">Стиль торговли</Label>
           <div className="grid gap-3 md:grid-cols-3">

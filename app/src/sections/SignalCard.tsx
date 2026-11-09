@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { api, fmtPrice, timeAgo, type TradeEnv } from '@/lib/api'
-import type { Signal, SignalCheck } from '@/types'
+import type { DemoTrade, Signal, SignalCheck } from '@/types'
 import TradeDialog from './TradeDialog'
 
 function futuresUrl(host: string, symbol: string): string {
@@ -24,11 +24,20 @@ function StatusIcon({ status }: { status: Signal['status'] }) {
   return <Clock className="h-3.5 w-3.5" />
 }
 
+function demoMoney(value: number): string {
+  const text = Math.abs(value).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (value > 0) return `+${text}`
+  if (value < 0) return `−${text}`
+  return '0,00'
+}
+
 export default function SignalCard({
   signal: s,
+  demoTrade = null,
   onUpdated,
 }: {
   signal: Signal
+  demoTrade?: DemoTrade | null
   onUpdated?: () => void
 }) {
   const isLong = s.side === 'LONG'
@@ -100,6 +109,32 @@ export default function SignalCard({
           ) : null}
         </div>
       </div>
+
+      {demoTrade?.status === 'open' ? (
+        <div className="mt-3 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2 text-xs">
+          <div className="font-semibold text-foreground">Сканер открыл эту сделку на демо</div>
+          <div className="mt-1 text-muted-foreground">
+            {demoTrade.unrealized_pnl == null
+              ? 'Жду плавающий результат с биржи.'
+              : `Сейчас на бирже ${demoMoney(demoTrade.unrealized_pnl)} USDT.`}
+            {demoTrade.margin_usdt ? ` Ставка ${demoMoney(demoTrade.margin_usdt)} USDT` : ''}
+            {demoTrade.leverage ? `, плечо ${demoTrade.leverage}x.` : '.'}
+          </div>
+          {demoTrade.settle_note ? <div className="mt-1 text-foreground">{demoTrade.settle_note}</div> : null}
+        </div>
+      ) : demoTrade?.status === 'closed' ? (
+        <div className="mt-3 rounded-lg border border-border bg-secondary/60 px-3 py-2 text-xs">
+          <div className="font-semibold text-foreground">
+            Сканер закрыл демо-сделку
+            {demoTrade.net_pnl == null ? '' : `: ${demoMoney(demoTrade.net_pnl)} USDT`}
+          </div>
+          <div className="mt-1 text-muted-foreground">
+            Цифры с биржи
+            {demoTrade.gross_pnl == null ? '' : `, результат ${demoMoney(demoTrade.gross_pnl)}`}
+            {demoTrade.commission == null ? '' : `, комиссия ${demoMoney(-demoTrade.commission)}`}.
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-4 grid grid-cols-3 gap-2 font-mono text-sm">
         <div className="rounded-lg bg-secondary/60 px-3 py-2">

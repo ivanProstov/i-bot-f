@@ -1,4 +1,4 @@
-import type { PairRow, Settings, Signal, Status } from '@/types'
+import type { DemoReport, PairRow, Settings, Signal, Status } from '@/types'
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, {
@@ -38,6 +38,7 @@ export const api = {
   signals: () => req<{ signals: Signal[] }>('/api/signals'),
   refreshSignal: (id: string) => req<Signal>(`/api/signals/${id}/refresh`, { method: 'POST' }),
   pairs: () => req<{ pairs: PairRow[] }>('/api/pairs'),
+  demoTrades: () => req<DemoReport>('/api/demo-trades'),
   getSettings: () => req<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) =>
     req<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),

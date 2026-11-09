@@ -51,6 +51,17 @@ def keys_status() -> dict:
     }
 
 
+async def demo_request(method: str, path: str, params: dict | None = None):
+    """Подписанный запрос только к демо-счёту. Реальный счёт отсюда не вызывается."""
+    creds = _load()["demo"]
+    api_key, secret = creds.get("api_key", ""), creds.get("api_secret", "")
+    if not api_key or not secret:
+        raise TradeError("Для демо-счёта не заданы ключи. Добавьте их в настройках.")
+    headers = {"X-MBX-APIKEY": api_key}
+    async with httpx.AsyncClient(base_url=ENVS["demo"], timeout=20, headers=headers) as client:
+        return await _call(client, method, path, secret, params or {})
+
+
 def save_keys(env: str, api_key: str, api_secret: str) -> None:
     if env not in ENVS:
         raise TradeError("Неизвестный счёт")
@@ -239,3 +250,36 @@ async def open_position(
         "sl_order_id": sl_id,
         "warning": warning,
     }
+
+
+async def close_demo_position(symbol: str, side: str, quantity: str) -> None:
+    """Закрывает только размер демо-позиции сканера. Реальный счёт не вызывается."""
+    if side not in ("LONG", "SHORT"):
+        raise TradeError("Сторона должна быть LONG или SHORT")
+    creds = _load()["demo"]
+    api_key, secret = creds.get("api_key", ""), creds.get("api_secret", "")
+    if not api_key or not secret:
+        raise TradeError("Для демо-счёта не заданы ключи. Добавьте их в настройках.")
+    headers = {"X-MBX-APIKEY": api_key}
+    async with httpx.AsyncClient(base_url=ENVS["demo"], timeout=20, headers=headers) as client:
+        mode = await _call(client, "GET", "/fapi/v1/positionSide/dual", secret, {})
+        hedge = bool(mode.get("dualSidePosition"))
+        try:
+            await _call(client, "DELETE", "/fapi/v1/algoOpenOrders", secret, {"symbol": symbol})
+        except TradeError:
+            pass
+        info = (await _exchange_info(client, "demo")).get(symbol)
+        if not info:
+            raise TradeError(f"Пара {symbol} не найдена на демо-счёте")
+        step, _, _, _ = _filters(info)
+        qty = _floor(Decimal(quantity), step)
+        if qty <= 0:
+            raise TradeError("На бирже не осталось количества для закрытия")
+        await _call(client, "POST", "/fapi/v1/order", secret, {
+            "symbol": symbol,
+            "side": "SELL" if side == "LONG" else "BUY",
+            "type": "MARKET",
+            "quantity": _fmt(qty),
+            "reduceOnly": None if hedge else "true",
+            "positionSide": side if hedge else None,
+        })

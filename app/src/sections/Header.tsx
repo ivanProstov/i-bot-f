@@ -24,7 +24,10 @@ export default function Header({ status, backendDown, onToggle, onScanNow }: Pro
           <div>
             <h1 className="text-xl font-bold leading-tight">Futures Signal Bot</h1>
             <p className="text-sm text-muted-foreground">
-              Binance USDT-M · сигнал открывает сделку только по кнопке
+              Binance USDT-M ·{' '}
+              {status?.auto?.enabled
+                ? 'автоторговля на демо включена'
+                : 'автоторговля выключена, сделки только по кнопке'}
             </p>
           </div>
         </div>

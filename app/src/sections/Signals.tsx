@@ -1,15 +1,17 @@
 import { useMemo, useState } from 'react'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import SignalCard from './SignalCard'
-import type { Signal } from '@/types'
+import type { DemoTrade, Signal } from '@/types'
 
 type Filter = 'active' | 'all' | 'closed'
 
 export default function Signals({
   signals,
+  demoTrades = [],
   onUpdated,
 }: {
   signals: Signal[]
+  demoTrades?: DemoTrade[]
   onUpdated?: () => void
 }) {
   const [filter, setFilter] = useState<Filter>('active')
@@ -53,7 +55,16 @@ export default function Signals({
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((s) => (
-            <SignalCard key={s.id} signal={s} onUpdated={onUpdated} />
+            <SignalCard
+              key={s.id}
+              signal={s}
+              onUpdated={onUpdated}
+              demoTrade={
+                demoTrades.find((trade) => trade.signal_id === s.id && trade.status === 'open') ??
+                demoTrades.find((trade) => trade.signal_id === s.id && trade.status === 'closed') ??
+                null
+              }
+            />
           ))}
         </div>
       )}

@@ -51,6 +51,67 @@ export interface Settings {
   signal_ttl_hours: number
   conservative: StyleCfg
   aggressive: StyleCfg
+  auto_trade: boolean
+  auto_wallet_pct: number
+  auto_leverage: number
+  auto_min_confidence: number
+}
+
+export interface DemoBucket {
+  key: number
+  label: string
+  count: number
+  wins: number
+  losses: number
+  commission: number
+  net_pnl: number
+}
+
+export interface DemoTrade {
+  id: string
+  signal_id: string
+  symbol: string
+  side: 'LONG' | 'SHORT'
+  style: string | null
+  leverage: number
+  wallet_pct: number
+  quantity: string | null
+  order_id: number | null
+  opened_at: number | null
+  entry_price: number | null
+  status: 'open' | 'closed' | 'skipped' | 'error'
+  error: string | null
+  skip_reason: string | null
+  warning: string | null
+  gross_pnl: number | null
+  commission: number | null
+  funding: number | null
+  net_pnl: number | null
+  unrealized_pnl: number | null
+  open_commission: number | null
+  closed_at: number | null
+  created_at: number
+  settle_note: string | null
+  margin_usdt?: number | null
+  signal_created_at?: number | null
+  exit_wait?: boolean | null
+  exit_target?: number | null
+  closing?: boolean | null
+}
+
+export interface DemoReport {
+  error: string | null
+  trades: DemoTrade[]
+  hours: DemoBucket[]
+  weekdays: DemoBucket[]
+  closed: number
+  open: number
+  net_pnl: number
+  commission: number
+  funding: number
+  gross_pnl: number
+  best_hour: DemoBucket | null
+  best_weekday: DemoBucket | null
 }
 
 export interface Status {
@@ -68,4 +129,9 @@ export interface Status {
     stake_usdt: number
   }
   settings: Settings
+  auto?: {
+    enabled: boolean
+    error: string | null
+    open: number
+  }
 }

@@ -5,22 +5,30 @@ import Header from '@/sections/Header'
 import Signals from '@/sections/Signals'
 import Market from '@/sections/Market'
 import SettingsPanel from '@/sections/SettingsPanel'
+import DemoTrades from '@/sections/DemoTrades'
 import { api } from '@/lib/api'
-import type { PairRow, Signal, Status } from '@/types'
+import type { DemoReport, PairRow, Signal, Status } from '@/types'
 
 export default function Home() {
   const [status, setStatus] = useState<Status | null>(null)
   const [signals, setSignals] = useState<Signal[]>([])
   const [pairs, setPairs] = useState<PairRow[]>([])
+  const [demo, setDemo] = useState<DemoReport | null>(null)
   const [backendDown, setBackendDown] = useState(false)
   const [tab, setTab] = useState('signals')
 
   const refresh = useCallback(async () => {
     try {
-      const [st, sg, pr] = await Promise.all([api.status(), api.signals(), api.pairs()])
+      const [st, sg, pr, deals] = await Promise.all([
+        api.status(),
+        api.signals(),
+        api.pairs(),
+        api.demoTrades(),
+      ])
       setStatus(st)
       setSignals(sg.signals)
       setPairs(pr.pairs)
+      setDemo(deals)
       setBackendDown(false)
     } catch {
       setBackendDown(true)
@@ -75,13 +83,17 @@ export default function Home() {
         <TabsList>
           <TabsTrigger value="signals" className="cursor-pointer">Сигналы</TabsTrigger>
           <TabsTrigger value="market" className="cursor-pointer">Рынок</TabsTrigger>
+          <TabsTrigger value="demo" className="cursor-pointer">Демо-сделки</TabsTrigger>
           <TabsTrigger value="settings" className="cursor-pointer">Настройки</TabsTrigger>
         </TabsList>
         <TabsContent value="signals" className="mt-6">
-          <Signals signals={signals} onUpdated={refresh} />
+          <Signals signals={signals} demoTrades={demo?.trades ?? []} onUpdated={refresh} />
         </TabsContent>
         <TabsContent value="market" className="mt-6">
           <Market pairs={pairs} />
+        </TabsContent>
+        <TabsContent value="demo" className="mt-6">
+          <DemoTrades report={demo} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           {status ? (

@@ -7,6 +7,7 @@
 - генерирует сигналы LONG/SHORT с точкой входа, тейк-профитом и стоп-лоссом;
 - отслеживает судьбу сигнала (WIN / LOSS / активен);
 - по отдельной кнопке открывает сделку на демо- или реальном счёте;
+- если автоторговля включена, сам открывает каждый сигнал один раз на демо-счёте;
 - отдаёт всё через REST API для React-интерфейса.
 
 Запуск: uvicorn server.main:app --host 127.0.0.1 --port 8100
@@ -25,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .autotrade import book
 from .trade import TradeError, keys_status, open_position, save_keys
 
 BASE = "https://fapi.binance.com"
@@ -50,6 +52,14 @@ DEFAULT_SETTINGS = {
     "max_active": 12,
     # через сколько часов активный сигнал считается протухшим
     "signal_ttl_hours": 6,
+    # автоторговля только на демо: выкл, пока пользователь сам не включит
+    "auto_trade": False,
+    # сколько процентов свободного USDT становится маржой одной сделки
+    "auto_wallet_pct": 5,
+    # плечо демо-сделки
+    "auto_leverage": 5,
+    # сканер открывает демо-сделку, только если уверенность сигнала не ниже этого процента
+    "auto_min_confidence": 0,
 }
 
 
@@ -450,6 +460,10 @@ class Scanner:
 
             self.last_scan = time.time()
             self._save_history()
+            try:
+                await book.tick(list(self.signals), SETTINGS)
+            except Exception as exc:
+                book.error = f"{type(exc).__name__}: {exc}"
         finally:
             self.scanning = False
 
@@ -690,6 +704,11 @@ def status():
             "stake_usdt": STAKE_USDT,
         },
         "settings": SETTINGS,
+        "auto": {
+            "enabled": bool(SETTINGS.get("auto_trade")),
+            "error": book.error,
+            "open": sum(1 for row in book.trades if row.get("status") == "open"),
+        },
     }
 
 
@@ -739,10 +758,14 @@ class SettingsPatch(BaseModel):
     signal_ttl_hours: int | None = None
     conservative: dict | None = None
     aggressive: dict | None = None
+    auto_trade: bool | None = None
+    auto_wallet_pct: float | None = None
+    auto_leverage: int | None = None
+    auto_min_confidence: int | None = None
 
 
 @app.put("/api/settings")
-def put_settings(patch: SettingsPatch):
+async def put_settings(patch: SettingsPatch):
     data = patch.model_dump(exclude_none=True)
     if "style" in data and data["style"] not in ("conservative", "aggressive", "mixed"):
         data.pop("style")
@@ -758,9 +781,24 @@ def put_settings(patch: SettingsPatch):
             merged.update({k: float(v) for k, v in data[key].items()
                            if k in ("tp_atr", "sl_atr", "min_rr")})
             data[key] = merged
+    if "auto_wallet_pct" in data:
+        data["auto_wallet_pct"] = max(1.0, min(50.0, float(data["auto_wallet_pct"])))
+    if "auto_leverage" in data:
+        data["auto_leverage"] = max(1, min(50, int(data["auto_leverage"])))
+    if "auto_trade" in data:
+        data["auto_trade"] = bool(data["auto_trade"])
+    if "auto_min_confidence" in data:
+        data["auto_min_confidence"] = max(0, min(100, int(data["auto_min_confidence"])))
     SETTINGS.update(data)
     save_settings(SETTINGS)
+    if SETTINGS.get("auto_trade"):
+        asyncio.create_task(book.tick(list(scanner.signals), SETTINGS))
     return SETTINGS
+
+
+@app.get("/api/demo-trades")
+def demo_trades():
+    return book.report()
 
 
 @app.post("/api/scanner/start")
