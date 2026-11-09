@@ -1,7 +1,8 @@
-import { Activity, LogOut, Pause, Play, RefreshCw } from 'lucide-react'
+import { LogOut, Pause, Play, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { timeAgo } from '@/lib/api'
 import type { Status } from '@/types'
+import Swarm from './Swarm'
 
 interface Props {
   status: Status | null
@@ -17,47 +18,29 @@ export default function Header({ status, backendDown, readOnly, onToggle, onScan
   const stats = status?.stats
 
   return (
-    <header className="flex flex-col gap-4 border-b border-border pb-5 md:flex-row md:items-center md:justify-between">
+    <header className="border-b border-border pb-6">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
       <div>
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/15">
-            <Activity className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold leading-tight">Futures Signal Bot</h1>
-            <p className="text-sm text-muted-foreground">
-              Binance USDT-M ·{' '}
-              {status?.auto?.enabled
-                ? 'автоторговля на демо включена'
-                : 'автоторговля выключена, сделки только по кнопке'}
-            </p>
-          </div>
-        </div>
+        <p className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Локатор</p>
+        <h1 className="mt-1 text-[1.65rem] font-semibold leading-none">Futures Signal Bot</h1>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          Binance USDT-M ·{' '}
+          {status?.auto?.enabled
+            ? 'автоторговля на демо включена'
+            : 'автоторговля выключена, сделки только по кнопке'}
+        </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="flex items-center gap-2 text-sm">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              backendDown
-                ? 'bg-destructive'
-                : running
-                  ? 'bg-[hsl(var(--long))] dot-live'
-                  : 'bg-muted-foreground'
-            }`}
-          />
-          <span className="text-muted-foreground">
-            {backendDown
-              ? 'бэкенд недоступен'
-              : status?.scanning
-                ? 'сканирую рынок…'
-                : running
-                  ? `мониторинг · ${status?.pairs_count ?? 0} пар`
-                  : 'на паузе'}
-          </span>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 lg:justify-end">
+        <div className="text-sm text-muted-foreground">
+          {backendDown
+            ? 'бэкенд недоступен'
+            : running
+              ? `${status?.pairs_count ?? 0} пар в работе`
+              : 'сканер на паузе'}
           {status?.last_scan ? (
-            <span className="hidden text-xs text-muted-foreground/70 md:inline">
-              · скан {timeAgo(status.last_scan)}
+            <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground/80">
+              скан {timeAgo(status.last_scan)}
             </span>
           ) : null}
         </div>
@@ -122,6 +105,13 @@ export default function Header({ status, backendDown, readOnly, onToggle, onScan
           </Button>
         </div>
       </div>
+      </div>
+      <Swarm
+        className="mt-5 h-40"
+        running={!backendDown && (status?.running ?? true)}
+        scanning={Boolean(status?.scanning)}
+        offline={backendDown}
+      />
     </header>
   )
 }

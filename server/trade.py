@@ -275,11 +275,26 @@ async def close_demo_position(symbol: str, side: str, quantity: str) -> None:
         qty = _floor(Decimal(quantity), step)
         if qty <= 0:
             raise TradeError("На бирже не осталось количества для закрытия")
-        await _call(client, "POST", "/fapi/v1/order", secret, {
+        order = {
             "symbol": symbol,
             "side": "SELL" if side == "LONG" else "BUY",
             "type": "MARKET",
             "quantity": _fmt(qty),
-            "reduceOnly": None if hedge else "true",
             "positionSide": side if hedge else None,
-        })
+        }
+        if not hedge:
+            order["reduceOnly"] = "true"
+        try:
+            await _call(client, "POST", "/fapi/v1/order", secret, order)
+        except TradeError as exc:
+            if hedge or "ReduceOnly" not in str(exc):
+                raise
+            # Демо иногда отвергает reduceOnly даже без встречных ордеров.
+            # Повтор тем же количеством, без флага, просто гасит позицию.
+            try:
+                await _call(client, "DELETE", "/fapi/v1/allOpenOrders", secret, {"symbol": symbol})
+            except TradeError:
+                pass
+            plain = dict(order)
+            plain.pop("reduceOnly", None)
+            await _call(client, "POST", "/fapi/v1/order", secret, plain)

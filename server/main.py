@@ -61,6 +61,10 @@ DEFAULT_SETTINGS = {
     "auto_leverage": 5,
     # сканер открывает демо-сделку, только если уверенность сигнала не ниже этого процента
     "auto_min_confidence": 0,
+    # после закрытия сделки пара не берётся в автоторговлю столько часов
+    "pair_rest_hours": 2,
+    # если тейк дальше 10% цены, закрыть сделку при таком плюсе от ставки
+    "auto_profit_close_pct": 30,
 }
 
 
@@ -267,6 +271,7 @@ def evaluate(symbol: str, candles: list[dict], style: str) -> dict | None:
         "created_at": time.time(),
         "candle_open": candles[-1]["open_time"],
         "status": "active",      # active | win | loss | expired
+        "disabled": False,
         "closed_at": None,
         "result_pct": None,
     }
@@ -678,6 +683,7 @@ def login(body: LoginIn):
 @app.on_event("startup")
 async def _startup():
     await scanner.start()
+    asyncio.create_task(book.watch_profit(SETTINGS))
 
 
 @app.on_event("shutdown")
@@ -729,9 +735,51 @@ def status():
     }
 
 
+def _public_signal(signal: dict) -> dict:
+    row = dict(signal)
+    row["rest_until"] = book.pair_rest_until(signal["symbol"], SETTINGS)
+    return row
+
+
 @app.get("/api/signals")
 def signals():
-    return {"signals": list(scanner.signals)}
+    active = [s for s in scanner.signals if s.get("status") == "active"]
+    return {
+        "signals": [_public_signal(s) for s in active],
+        "resting": book.resting_pairs(SETTINGS),
+    }
+
+
+@app.get("/api/signals/history")
+def signal_history(page: int = 1, page_size: int = 12):
+    size = max(1, min(50, page_size))
+    closed = [s for s in scanner.signals if s.get("status") != "active"]
+    total = len(closed)
+    pages = (total + size - 1) // size if total else 0
+    current = min(max(page, 1), pages) if pages else 1
+    start = (current - 1) * size if pages else 0
+    chunk = closed[start:start + size] if pages else []
+    return {
+        "signals": [_public_signal(s) for s in chunk],
+        "page": current if pages else 1,
+        "page_size": size,
+        "total": total,
+        "pages": pages,
+    }
+
+
+class SignalOffIn(BaseModel):
+    disabled: bool
+
+
+@app.put("/api/signals/{signal_id}/disabled")
+def signal_disabled(signal_id: str, body: SignalOffIn):
+    signal = next((s for s in scanner.signals if s["id"] == signal_id), None)
+    if signal is None:
+        raise HTTPException(404, "Сигнал не найден")
+    signal["disabled"] = bool(body.disabled)
+    scanner._save_history()
+    return _public_signal(signal)
 
 
 @app.post("/api/signals/{signal_id}/refresh")
@@ -753,7 +801,7 @@ async def refresh_signal(signal_id: str):
         scanner._close(signal, close_as, time.time(), last)
     signal["check"] = check
     scanner._save_history()
-    return signal
+    return _public_signal(signal)
 
 
 @app.get("/api/pairs")
@@ -779,6 +827,8 @@ class SettingsPatch(BaseModel):
     auto_wallet_pct: float | None = None
     auto_leverage: int | None = None
     auto_min_confidence: int | None = None
+    pair_rest_hours: float | None = None
+    auto_profit_close_pct: float | None = None
 
 
 @app.put("/api/settings")
@@ -806,6 +856,10 @@ async def put_settings(patch: SettingsPatch):
         data["auto_trade"] = bool(data["auto_trade"])
     if "auto_min_confidence" in data:
         data["auto_min_confidence"] = max(0, min(100, int(data["auto_min_confidence"])))
+    if "pair_rest_hours" in data:
+        data["pair_rest_hours"] = max(0.0, min(48.0, float(data["pair_rest_hours"])))
+    if "auto_profit_close_pct" in data:
+        data["auto_profit_close_pct"] = max(0.0, min(100.0, round(float(data["auto_profit_close_pct"]), 1)))
     SETTINGS.update(data)
     save_settings(SETTINGS)
     if SETTINGS.get("auto_trade"):
@@ -816,6 +870,30 @@ async def put_settings(patch: SettingsPatch):
 @app.get("/api/demo-trades")
 def demo_trades():
     return book.report()
+
+
+@app.post("/api/demo-trades/{trade_id}/close")
+async def demo_trade_close(trade_id: str):
+    try:
+        return await book.close_manual(trade_id, SETTINGS)
+    except KeyError:
+        raise HTTPException(404, "Демо-сделка не найдена") from None
+    except TradeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class ProfitCloseIn(BaseModel):
+    usdt: float | None = None
+
+
+@app.put("/api/demo-trades/{trade_id}/profit-close")
+async def demo_trade_profit_close(trade_id: str, body: ProfitCloseIn):
+    try:
+        return await book.set_profit_close(trade_id, body.usdt, SETTINGS)
+    except KeyError:
+        raise HTTPException(404, "Демо-сделка не найдена") from None
+    except TradeError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/scanner/start")

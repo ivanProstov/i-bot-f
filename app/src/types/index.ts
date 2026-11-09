@@ -24,9 +24,25 @@ export interface Signal {
   reasons: string[]
   created_at: number
   status: 'active' | 'win' | 'loss' | 'expired'
+  disabled?: boolean
+  rest_until?: number | null
   closed_at: number | null
   result_pct: number | null
   check?: SignalCheck | null
+}
+
+export interface SignalHistory {
+  signals: Signal[]
+  page: number
+  page_size: number
+  total: number
+  pages: number
+}
+
+export interface RestingPair {
+  symbol: string
+  until: number
+  closed_at: number
 }
 
 export interface PairRow {
@@ -55,6 +71,8 @@ export interface Settings {
   auto_wallet_pct: number
   auto_leverage: number
   auto_min_confidence: number
+  pair_rest_hours: number
+  auto_profit_close_pct: number
 }
 
 export interface DemoBucket {
@@ -97,6 +115,7 @@ export interface DemoTrade {
   exit_wait?: boolean | null
   exit_target?: number | null
   closing?: boolean | null
+  profit_close_usdt?: number | null
 }
 
 export interface DemoReport {

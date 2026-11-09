@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api, setAuthToken, type AuthRole } from '@/lib/api'
+import Swarm from './Swarm'
 
 export default function Login({ onSuccess }: { onSuccess: (role: AuthRole) => void }) {
   const [token, setToken] = useState('')
@@ -30,17 +30,13 @@ export default function Login({ onSuccess }: { onSuccess: (role: AuthRole) => vo
   }
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md items-center px-4 py-10">
-      <form onSubmit={submit} className="w-full rounded-xl border border-border bg-card p-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/15">
-            <Activity className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold leading-tight">Вход в локатор</h1>
-            <p className="text-sm text-muted-foreground">Токен из окружения бота</p>
-          </div>
-        </div>
+    <div className="relative z-0 mx-auto flex min-h-dvh max-w-md items-center px-4 py-10">
+      <Swarm variant="field" running scanning={false} offline={false} />
+      <form onSubmit={submit} className="w-full rounded-2xl border border-border bg-card p-6">
+        <p className="text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Локатор</p>
+        <h1 className="mt-1 text-2xl font-semibold leading-tight">Вход</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Токен из окружения бота</p>
+        <Swarm running scanning={false} offline={false} className="mt-5" />
         <label className="mt-6 block text-sm text-muted-foreground" htmlFor="locator-token">
           Токен
         </label>

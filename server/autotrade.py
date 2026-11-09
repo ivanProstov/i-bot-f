@@ -16,9 +16,12 @@ from pathlib import Path
 from .trade import TradeError, close_demo_position, demo_request, open_position
 
 TRADES_PATH = Path(__file__).parent / "trades.json"
-MSK = timezone(timedelta(hours=3))
+MINSK = timezone(timedelta(hours=3))
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 MAX_OPEN_PER_TICK = 3
+# Далёкий тейк почти не достигается: если ход цены до тейка больше 10%,
+# сделку закрываем по плюсу в 30% ставки (маржи), а не номинала с плечом.
+WIDE_TP_PCT = 10
 
 
 def _fmt_qty(value: Decimal) -> str:
@@ -37,8 +40,16 @@ def exit_target(margin: Decimal, commission: Decimal) -> Decimal:
     return margin * Decimal("0.01") + commission
 
 
-def _msk(ts: float) -> datetime:
-    return datetime.fromtimestamp(ts, MSK)
+def stake_profit_close(tp_pct: float, margin: Decimal, share_pct: float) -> float | None:
+    """Порог плюса в USDT, если тейк сигнала дальше 10% цены. Процент берётся от ставки."""
+    if share_pct <= 0 or tp_pct <= WIDE_TP_PCT or margin <= 0:
+        return None
+    goal = round(_num(margin * Decimal(str(share_pct)) / Decimal(100)), 2)
+    return goal if goal > 0 else None
+
+
+def _minsk(ts: float) -> datetime:
+    return datetime.fromtimestamp(ts, MINSK)
 
 
 def _bucket(rows: list[dict], key: int, label: str) -> dict:
@@ -62,11 +73,11 @@ def summarize(trades: list[dict]) -> dict:
     ]
     hours = []
     for hour in range(24):
-        rows = [row for row in closed if _msk(row["opened_at"]).hour == hour]
+        rows = [row for row in closed if _minsk(row["opened_at"]).hour == hour]
         hours.append(_bucket(rows, hour, f"{hour:02d}"))
     weekdays = []
     for index, name in enumerate(WEEKDAYS):
-        rows = [row for row in closed if _msk(row["opened_at"]).weekday() == index]
+        rows = [row for row in closed if _minsk(row["opened_at"]).weekday() == index]
         weekdays.append(_bucket(rows, index, name))
 
     def best(buckets: list[dict]) -> dict | None:
@@ -111,9 +122,69 @@ class AutoBook:
     def _known(self, signal_id: str) -> bool:
         return any(row.get("signal_id") == signal_id for row in self.trades)
 
+    def resting_pairs(self, settings: dict) -> list[dict]:
+        """Пары, по которым автоторговля ещё ждёт после закрытой сделки."""
+        raw = settings.get("pair_rest_hours")
+        hours = 2.0 if raw is None else float(raw)
+        if hours <= 0:
+            return []
+        latest: dict[str, float] = {}
+        for row in self.trades:
+            if row.get("status") != "closed" or not row.get("symbol"):
+                continue
+            if not row.get("opened_at") or not row.get("closed_at"):
+                continue
+            symbol = str(row["symbol"])
+            closed = float(row["closed_at"])
+            if symbol not in latest or closed > latest[symbol]:
+                latest[symbol] = closed
+        now = time.time()
+        resting = []
+        for symbol, closed in latest.items():
+            until = closed + hours * 3600
+            if now < until:
+                resting.append({"symbol": symbol, "until": until, "closed_at": closed})
+        resting.sort(key=lambda row: row["until"])
+        return resting
+
+    def pair_rest_until(self, symbol: str, settings: dict) -> float | None:
+        """До какого момента пара не берётся в автоторговлю после закрытой сделки."""
+        for row in self.resting_pairs(settings):
+            if row["symbol"] == symbol:
+                return row["until"]
+        return None
+
     def _add(self, row: dict):
         self.trades.insert(0, row)
         self._save()
+
+    async def close_manual(self, trade_id: str, settings: dict) -> dict:
+        """Закрывает одну открытую демо-сделку сканера. Чужие и реальные позиции не трогает."""
+        async with self._lock:
+            trade = next((row for row in self.trades if row.get("id") == trade_id), None)
+            if trade is None:
+                raise KeyError(trade_id)
+            if trade.get("status") != "open":
+                raise TradeError("Эта демо-сделка уже закрыта")
+            now = time.time()
+            if trade.get("closing") and now - float(trade.get("close_requested_at") or 0) < 15:
+                return trade
+            rows = await self._rows(trade["symbol"])
+            if rows is None:
+                raise TradeError("Демо-биржа не ответила, закрытие не отправлено")
+            amount, _ = self._side_state(rows, trade["side"])
+            if amount <= 0:
+                trade["settle_note"] = "Позиции на бирже уже нет, жду проводку результата"
+                self._save()
+                return trade
+            await close_demo_position(trade["symbol"], trade["side"], _fmt_qty(amount))
+            trade["closing"] = True
+            trade["close_requested_at"] = now
+            trade["settle_note"] = "Закрываю демо-сделку по кнопке"
+            self._save()
+            await asyncio.sleep(0.6)
+            await self._settle(settings)
+            return trade
 
     async def tick(self, signals: list[dict], settings: dict):
         async with self._lock:
@@ -159,7 +230,7 @@ class AutoBook:
         born = float(trade.get("signal_created_at") or trade.get("opened_at") or now)
         ttl = float(settings.get("signal_ttl_hours") or 6) * 3600
         if now - born < ttl:
-            return self._note(trade, None)
+            return False
         if trade.get("closing") and now - float(trade.get("close_requested_at") or 0) < 20:
             return False
         commission = Decimal(str(trade.get("open_commission") or 0))
@@ -199,6 +270,100 @@ class AutoBook:
         trade["close_requested_at"] = now
         return self._note(trade, note) or True
 
+    async def _close_for_profit(self, trade: dict, amount: Decimal, unrealized: Decimal, now: float) -> bool:
+        """Закрывает демо-сделку, когда плавающий плюс биржи достиг суммы, заданной вручную."""
+        raw = trade.get("profit_close_usdt")
+        if not raw:
+            return False
+        if trade.get("closing") and now - float(trade.get("close_requested_at") or 0) < 20:
+            return False
+        goal = Decimal(str(raw))
+        if unrealized < goal:
+            return False
+        note = (
+            f"Плюс на бирже {_num(unrealized):.2f} USDT достиг {_num(goal):.2f} — закрываю демо-сделку"
+        )
+        try:
+            await close_demo_position(trade["symbol"], trade["side"], _fmt_qty(amount))
+        except TradeError as exc:
+            trade["closing"] = False
+            return self._note(trade, f"Не смог закрыть по плюсу {_num(goal):.2f} USDT: {exc}") or True
+        trade["closing"] = True
+        trade["close_requested_at"] = now
+        return self._note(trade, note) or True
+
+    async def set_profit_close(self, trade_id: str, usdt: float | None, settings: dict) -> dict:
+        async with self._lock:
+            trade = next((row for row in self.trades if row.get("id") == trade_id), None)
+            if trade is None:
+                raise KeyError(trade_id)
+            if trade.get("status") != "open":
+                raise TradeError("Порог плюса можно поставить только открытой демо-сделке")
+            if usdt is None or usdt <= 0:
+                trade["profit_close_usdt"] = None
+                note = str(trade.get("settle_note") or "")
+                if note.startswith("Закрою, когда плюс") or note.startswith("Тейк сигнала"):
+                    trade["settle_note"] = None
+                self._save()
+                return trade
+            if usdt > 1_000_000:
+                raise TradeError("Порог плюса слишком большой")
+            goal = round(float(usdt), 2)
+            trade["profit_close_usdt"] = goal
+            trade["settle_note"] = (
+                f"Закрою, когда плюс на бирже будет от {goal:.2f} USDT. Тейк по цене сигнала остаётся."
+            )
+            self._save()
+            rows = await self._rows(trade["symbol"])
+            if rows is not None:
+                amount, unrealized = self._side_state(rows, trade["side"])
+                if amount > 0:
+                    trade["unrealized_pnl"] = round(_num(unrealized), 4)
+                    if await self._close_for_profit(trade, amount, unrealized, time.time()):
+                        self._save()
+                        await asyncio.sleep(0.6)
+                        await self._settle(settings)
+            return trade
+
+    async def watch_profit(self, settings: dict | None = None):
+        """Пока у открытой сделки задан плюс в USDT, проверяет биржу чаще сканера."""
+        while True:
+            await asyncio.sleep(5)
+            try:
+                async with self._lock:
+                    watched = [
+                        row for row in self.trades
+                        if row.get("status") == "open" and row.get("profit_close_usdt")
+                    ]
+                    if not watched:
+                        continue
+                    now = time.time()
+                    changed = False
+                    closed = False
+                    for trade in watched:
+                        if now - float(trade.get("opened_at") or trade.get("created_at") or now) < 20:
+                            continue
+                        rows = await self._rows(trade["symbol"])
+                        if rows is None:
+                            continue
+                        amount, unrealized = self._side_state(rows, trade["side"])
+                        if amount <= 0:
+                            continue
+                        fresh = round(_num(unrealized), 4)
+                        if trade.get("unrealized_pnl") != fresh:
+                            trade["unrealized_pnl"] = fresh
+                            changed = True
+                        if await self._close_for_profit(trade, amount, unrealized, now):
+                            changed = True
+                            closed = True
+                    if changed:
+                        self._save()
+                    if closed:
+                        await asyncio.sleep(0.6)
+                        await self._settle(settings or {})
+            except Exception:
+                continue
+
     async def _settle(self, settings: dict):
         now = time.time()
         changed = False
@@ -217,6 +382,9 @@ class AutoBook:
                 if trade.get("unrealized_pnl") != fresh:
                     trade["unrealized_pnl"] = fresh
                     changed = True
+                if await self._close_for_profit(trade, amount, unrealized, now):
+                    changed = True
+                    continue
                 if await self._maybe_exit(trade, settings, amount, unrealized, now):
                     changed = True
                 continue
@@ -304,6 +472,10 @@ class AutoBook:
                 break
             if signal.get("status") != "active" or self._known(signal["id"]):
                 continue
+            if signal.get("disabled"):
+                continue
+            if self.pair_rest_until(signal["symbol"], settings):
+                continue
             if int(signal.get("confidence") or 0) < minimum:
                 continue
             if any(row.get("symbol") == signal["symbol"] and row.get("status") == "open" for row in self.trades):
@@ -330,7 +502,7 @@ class AutoBook:
             except Exception as exc:
                 self.error = f"Не открыл демо-сделку: {exc}"
                 return
-            await self._remember_open(signal, result, leverage, pct, notional)
+            await self._remember_open(signal, result, leverage, pct, notional, settings)
             opened += 1
         if opened:
             self.error = None
@@ -364,7 +536,9 @@ class AutoBook:
             "settle_note": None,
         })
 
-    async def _remember_open(self, signal: dict, result: dict, leverage: int, pct: Decimal, notional: Decimal):
+    async def _remember_open(
+        self, signal: dict, result: dict, leverage: int, pct: Decimal, notional: Decimal, settings: dict,
+    ):
         order_id = result.get("order_id")
         fills = []
         if order_id:
@@ -392,6 +566,17 @@ class AutoBook:
             opened_ms = stamp if opened_ms is None else min(opened_ms, stamp)
         now_ms = int(time.time() * 1000)
         opened_ms = opened_ms or now_ms
+        margin = (notional / leverage) if leverage else Decimal(0)
+        tp_pct = float(signal.get("tp_pct") or 0)
+        share = settings.get("auto_profit_close_pct")
+        share = 30.0 if share is None else float(share)
+        goal = stake_profit_close(tp_pct, margin, share)
+        note = None
+        if goal is not None:
+            note = (
+                f"Тейк сигнала {tp_pct:.2f}% — закрою при плюсе {goal:.2f} USDT, "
+                f"это {share:g}% ставки, не объёма с плечом. Тейк по цене остаётся."
+            )
         self._add({
             "id": uuid.uuid4().hex[:10],
             "signal_id": signal["id"],
@@ -401,10 +586,11 @@ class AutoBook:
             "leverage": leverage,
             "wallet_pct": float(pct),
             "notional": round(_num(notional), 4),
-            "margin_usdt": round(_num(notional / leverage), 4) if leverage else None,
+            "margin_usdt": round(_num(margin), 4) if leverage else None,
             "signal_created_at": signal.get("created_at"),
             "exit_wait": False,
             "exit_target": None,
+            "profit_close_usdt": goal,
             "closing": False,
             "quantity": result.get("quantity"),
             "order_id": order_id,
@@ -423,7 +609,7 @@ class AutoBook:
             "open_commission": round(_num(commission), 4) if fills else None,
             "closed_at": None,
             "created_at": time.time(),
-            "settle_note": None,
+            "settle_note": note,
         })
 
     def report(self) -> dict:

@@ -1,4 +1,4 @@
-import type { DemoReport, PairRow, Settings, Signal, Status } from '@/types'
+import type { DemoReport, DemoTrade, PairRow, RestingPair, Settings, Signal, SignalHistory, Status } from '@/types'
 
 const TOKEN_KEY = 'locator-token'
 
@@ -66,10 +66,24 @@ export const api = {
   login: (token: string) =>
     req<{ role: AuthRole }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ token }) }),
   status: () => req<Status>('/api/status'),
-  signals: () => req<{ signals: Signal[] }>('/api/signals'),
+  signals: () => req<{ signals: Signal[]; resting: RestingPair[] }>('/api/signals'),
+  signalHistory: (page: number) =>
+    req<SignalHistory>(`/api/signals/history?page=${page}&page_size=12`),
   refreshSignal: (id: string) => req<Signal>(`/api/signals/${id}/refresh`, { method: 'POST' }),
+  setSignalDisabled: (id: string, disabled: boolean) =>
+    req<Signal>(`/api/signals/${id}/disabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ disabled }),
+    }),
   pairs: () => req<{ pairs: PairRow[] }>('/api/pairs'),
   demoTrades: () => req<DemoReport>('/api/demo-trades'),
+  closeDemoTrade: (id: string) =>
+    req<DemoTrade>(`/api/demo-trades/${id}/close`, { method: 'POST' }),
+  setProfitClose: (id: string, usdt: number | null) =>
+    req<DemoTrade>(`/api/demo-trades/${id}/profit-close`, {
+      method: 'PUT',
+      body: JSON.stringify({ usdt }),
+    }),
   getSettings: () => req<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) =>
     req<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),

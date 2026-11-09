@@ -6,15 +6,17 @@ import Signals from '@/sections/Signals'
 import Market from '@/sections/Market'
 import SettingsPanel from '@/sections/SettingsPanel'
 import DemoTrades from '@/sections/DemoTrades'
+import Swarm from '@/sections/Swarm'
 import { api, AuthError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import type { DemoReport, PairRow, Signal, Status } from '@/types'
+import type { DemoReport, PairRow, RestingPair, Signal, Status } from '@/types'
 
 export default function Home() {
   const { role, logout } = useAuth()
   const readOnly = role === 'view'
   const [status, setStatus] = useState<Status | null>(null)
   const [signals, setSignals] = useState<Signal[]>([])
+  const [resting, setResting] = useState<RestingPair[]>([])
   const [pairs, setPairs] = useState<PairRow[]>([])
   const [demo, setDemo] = useState<DemoReport | null>(null)
   const [backendDown, setBackendDown] = useState(false)
@@ -30,6 +32,7 @@ export default function Home() {
       ])
       setStatus(st)
       setSignals(sg.signals)
+      setResting(sg.resting ?? [])
       setPairs(pr.pairs)
       setDemo(deals)
       setBackendDown(false)
@@ -58,7 +61,13 @@ export default function Home() {
   }
 
   return (
-    <div className="mx-auto min-h-dvh max-w-7xl px-4 py-6 md:px-8">
+    <div className="relative z-0 mx-auto min-h-dvh max-w-7xl px-4 py-6 md:px-8">
+      <Swarm
+        variant="field"
+        running={!backendDown && (status?.running ?? true)}
+        scanning={Boolean(status?.scanning)}
+        offline={backendDown}
+      />
       <Header
         status={status}
         backendDown={backendDown}
@@ -102,6 +111,7 @@ export default function Home() {
         <TabsContent value="signals" className="mt-6">
           <Signals
             signals={signals}
+            resting={resting}
             demoTrades={demo?.trades ?? []}
             onUpdated={refresh}
             readOnly={readOnly}
@@ -111,7 +121,7 @@ export default function Home() {
           <Market pairs={pairs} />
         </TabsContent>
         <TabsContent value="demo" className="mt-6">
-          <DemoTrades report={demo} />
+          <DemoTrades report={demo} readOnly={readOnly} onChanged={refresh} />
         </TabsContent>
         {readOnly ? null : (
           <TabsContent value="settings" className="mt-6">

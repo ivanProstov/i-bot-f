@@ -2,10 +2,13 @@ import { useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, Check, Clock, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import { api, fmtPrice, timeAgo, type TradeEnv } from '@/lib/api'
 import type { DemoTrade, Signal, SignalCheck } from '@/types'
 import TradeDialog from './TradeDialog'
+import CloseDemoButton from './CloseDemoButton'
+import ProfitCloseField from './ProfitCloseField'
 
 function futuresUrl(host: string, symbol: string): string {
   return `https://${host}/ru/futures/${encodeURIComponent(symbol)}`
@@ -22,6 +25,15 @@ function StatusIcon({ status }: { status: Signal['status'] }) {
   if (status === 'win') return <Check className="h-3.5 w-3.5" />
   if (status === 'loss') return <X className="h-3.5 w-3.5" />
   return <Clock className="h-3.5 w-3.5" />
+}
+
+function restClock(ts: number): string {
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Minsk',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(ts * 1000))
 }
 
 function demoMoney(value: number): string {
@@ -51,8 +63,24 @@ export default function SignalCard({
   const [trade, setTrade] = useState<TradeEnv | null>(null)
   const [check, setCheck] = useState<SignalCheck | null>(s.check ?? null)
   const [busy, setBusy] = useState(false)
+  const [savingOff, setSavingOff] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const turnedOff = Boolean(s.disabled)
+  const resting = s.status === 'active' && s.rest_until != null && s.rest_until * 1000 > Date.now()
   const shown = check && check.checked_at === s.check?.checked_at ? s.check : check ?? s.check ?? null
+
+  const toggleOff = async (next: boolean) => {
+    setSavingOff(true)
+    setError(null)
+    try {
+      await api.setSignalDisabled(s.id, next)
+      onUpdated?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось выключить сигнал')
+    } finally {
+      setSavingOff(false)
+    }
+  }
 
   const refresh = async () => {
     setBusy(true)
@@ -95,10 +123,20 @@ export default function SignalCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <Badge variant="outline" className={`gap-1 ${meta.cls}`}>
+          <Badge variant="outline" className={`gap-1 ${turnedOff && s.status === 'active' ? 'border-muted-foreground/40 text-muted-foreground' : meta.cls}`}>
             <StatusIcon status={s.status} />
-            {meta.label}
+            {turnedOff && s.status === 'active' ? 'Выключен' : meta.label}
           </Badge>
+          {s.status === 'active' ? (
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox
+                checked={turnedOff}
+                disabled={readOnly || savingOff}
+                onCheckedChange={(value) => toggleOff(value === true)}
+              />
+              Выключить
+            </label>
+          ) : null}
           {s.result_pct != null && s.status !== 'active' ? (
             <span
               className={`font-mono text-sm font-semibold ${
@@ -112,6 +150,19 @@ export default function SignalCard({
         </div>
       </div>
 
+      {turnedOff && s.status === 'active' ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Локатор этот сигнал не берёт в работу: автосделка не откроется.
+          {demoTrade?.status === 'open' ? ' Уже открытая демо-сделка остаётся.' : ''}
+        </p>
+      ) : null}
+      {resting && s.rest_until ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Пара отдыхает до {restClock(s.rest_until)} Минск после закрытой сделки. Локатор не откроет
+          по ней автосделку.
+        </p>
+      ) : null}
+
       {demoTrade?.status === 'open' ? (
         <div className="mt-3 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2 text-xs">
           <div className="font-semibold text-foreground">Сканер открыл эту сделку на демо</div>
@@ -123,6 +174,14 @@ export default function SignalCard({
             {demoTrade.leverage ? `, плечо ${demoTrade.leverage}x.` : '.'}
           </div>
           {demoTrade.settle_note ? <div className="mt-1 text-foreground">{demoTrade.settle_note}</div> : null}
+          <ProfitCloseField trade={demoTrade} readOnly={readOnly} onSaved={() => onUpdated?.()} />
+          {readOnly ? null : (
+            <CloseDemoButton
+              tradeId={demoTrade.id}
+              closing={Boolean(demoTrade.closing)}
+              onClosed={() => onUpdated?.()}
+            />
+          )}
         </div>
       ) : demoTrade?.status === 'closed' ? (
         <div className="mt-3 rounded-lg border border-border bg-secondary/60 px-3 py-2 text-xs">

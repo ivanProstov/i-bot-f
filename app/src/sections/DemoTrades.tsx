@@ -7,6 +7,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { DemoBucket, DemoReport, DemoTrade } from '@/types'
+import CloseDemoButton from './CloseDemoButton'
+import ProfitCloseField from './ProfitCloseField'
 
 const STATUS_LABEL = {
   open: 'Открыта',
@@ -35,7 +37,7 @@ function msk(ts: number | null): { clock: string; day: string } {
   if (!ts) return { clock: '—', day: '—' }
   const date = new Date(ts * 1000)
   const parts = new Intl.DateTimeFormat('ru-RU', {
-    timeZone: 'Europe/Moscow',
+    timeZone: 'Europe/Minsk',
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
@@ -100,7 +102,15 @@ function resultText(trade: DemoTrade): { text: string; className: string } {
   return { text: '—', className: 'text-muted-foreground' }
 }
 
-export default function DemoTrades({ report }: { report: DemoReport | null }) {
+export default function DemoTrades({
+  report,
+  readOnly = false,
+  onChanged,
+}: {
+  report: DemoReport | null
+  readOnly?: boolean
+  onChanged?: () => void
+}) {
   if (!report) {
     return (
       <section className="rounded-xl border border-dashed border-border py-14 text-center text-muted-foreground">
@@ -119,7 +129,7 @@ export default function DemoTrades({ report }: { report: DemoReport | null }) {
       <div>
         <h2 className="text-lg font-semibold">Демо-сделки</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Время — московское, по моменту открытия на бирже. В плюс и минус попадают только
+          Время — минское, по моменту открытия на бирже. В плюс и минус попадают только
           закрытые сделки, и только на суммы из проводок счёта: результат, комиссия и фандинг.
         </p>
       </div>
@@ -190,6 +200,14 @@ export default function DemoTrades({ report }: { report: DemoReport | null }) {
                     Порог выхода {money(trade.exit_target)} USDT: 1% ставки и комиссия биржи.
                   </p>
                 ) : null}
+                <ProfitCloseField trade={trade} readOnly={readOnly} onSaved={() => onChanged?.()} />
+                {readOnly ? null : (
+                  <CloseDemoButton
+                    tradeId={trade.id}
+                    closing={Boolean(trade.closing)}
+                    onClosed={() => onChanged?.()}
+                  />
+                )}
               </article>
             ))}
           </div>
@@ -207,7 +225,7 @@ export default function DemoTrades({ report }: { report: DemoReport | null }) {
           ) : null}
           {bestHour ? (
             <>
-              Лучший час: <span className="font-semibold">{bestHour.label}:00–{bestHour.label}:59 МСК</span>,{' '}
+              Лучший час: <span className="font-semibold">{bestHour.label}:00–{bestHour.label}:59 Минск</span>,{' '}
               <span className={tone(bestHour.net_pnl)}>{money(bestHour.net_pnl)} USDT</span> за{' '}
               {bestHour.count} сделок ({bestHour.wins} в плюс).
             </>
@@ -227,7 +245,7 @@ export default function DemoTrades({ report }: { report: DemoReport | null }) {
         suffix={(bucket) => bucket.label}
       />
       <BucketGrid
-        title="Час открытия, МСК"
+        title="Час открытия, Минск"
         buckets={report.hours}
         bestKey={bestHour?.key ?? null}
         suffix={(bucket) => `${bucket.label}:00`}
@@ -237,7 +255,7 @@ export default function DemoTrades({ report }: { report: DemoReport | null }) {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead>Открытие, МСК</TableHead>
+              <TableHead>Открытие, Минск</TableHead>
               <TableHead>День</TableHead>
               <TableHead>Пара</TableHead>
               <TableHead className="text-right">Результат</TableHead>
