@@ -1,0 +1,12 @@
+.git
+.venv
+server/.venv
+app/node_modules
+app/dist
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+server/history.json
+server/keys.json
+server/trades.json
+.env

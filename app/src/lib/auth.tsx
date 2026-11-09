@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router'
 import { api, authToken, clearAuthToken, type AuthRole } from '@/lib/api'
 import Login from '@/sections/Login'
 
@@ -16,6 +17,7 @@ export function useAuth(): Session {
 }
 
 export default function AuthGate({ children }: { children: ReactNode }) {
+  const navigate = useNavigate()
   const [role, setRole] = useState<AuthRole | null>(null)
   const [checking, setChecking] = useState(() => Boolean(authToken()))
 
@@ -53,6 +55,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const logout = () => {
     clearAuthToken()
     setRole(null)
+    navigate('/')
   }
 
   if (checking) {

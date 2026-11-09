@@ -1,0 +1,18 @@
+services:
+  backend:
+    image: ghcr.io/ivanprostov/i-bot-f-backend:latest
+    env_file: .env
+    volumes:
+      - locatordata:/data
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/ivanprostov/i-bot-f-frontend:latest
+    ports:
+      - "127.0.0.1:8100:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  locatordata:
