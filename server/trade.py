@@ -173,7 +173,11 @@ async def open_position(
     async with httpx.AsyncClient(base_url=ENVS[env], timeout=20, headers=headers) as client:
         price_resp = await client.get("/fapi/v1/ticker/price", params={"symbol": symbol})
         price_resp.raise_for_status()
-        price = Decimal(price_resp.json()["price"])
+        payload = price_resp.json()
+        raw_price = payload.get("price") if isinstance(payload, dict) else None
+        if not raw_price:
+            raise TradeError("Биржа не дала цену по этой паре. На демо-счёте контракт может уже не торговаться")
+        price = Decimal(raw_price)
 
         if side == "LONG" and not (Decimal(str(sl)) < price < Decimal(str(tp))):
             raise TradeError("Для лонга стоп должен быть ниже цены, а тейк — выше")
