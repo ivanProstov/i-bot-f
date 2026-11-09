@@ -9,6 +9,12 @@ import { fileURLToPath } from 'node:url'
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const py = path.join(root, '.venv', 'bin', 'python')
 
+// Экран может погаснуть. Пока жив этот процесс, Mac не уходит в сон,
+// иначе сканер замирает. Закрытая крышка ноутбука всё равно усыпляет систему.
+if (process.platform === 'darwin') {
+  spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' })
+}
+
 const server = spawn(py, ['-m', 'uvicorn', 'server.main:app', '--host', '127.0.0.1', '--port', '8100'], {
   cwd: root,
   stdio: ['ignore', 'inherit', 'inherit'],
