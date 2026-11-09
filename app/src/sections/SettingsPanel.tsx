@@ -43,6 +43,7 @@ function withAuto(settings: Settings): Settings {
     auto_min_confidence: settings.auto_min_confidence ?? 0,
     pair_rest_hours: settings.pair_rest_hours ?? 2,
     auto_profit_close_pct: settings.auto_profit_close_pct ?? 30,
+    auto_tp_path_pct: settings.auto_tp_path_pct ?? 50,
   }
 }
 
@@ -169,6 +170,21 @@ export default function SettingsPanel({
             </div>
             <div>
               <div className="mb-2 flex justify-between">
+                <Label>Тейк автосделки, путь сигнала</Label>
+                <span className="font-mono text-sm text-muted-foreground">
+                  {draft.auto_tp_path_pct}%
+                </span>
+              </div>
+              <Slider
+                min={10}
+                max={100}
+                step={5}
+                value={[draft.auto_tp_path_pct]}
+                onValueChange={([value]) => setDraft({ ...draft, auto_tp_path_pct: value })}
+              />
+            </div>
+            <div>
+              <div className="mb-2 flex justify-between">
                 <Label>Закрыть при плюсе от ставки</Label>
                 <span className="font-mono text-sm text-muted-foreground">
                   {draft.auto_profit_close_pct}%
@@ -186,9 +202,11 @@ export default function SettingsPanel({
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
             Маржа — это {draft.auto_wallet_pct}% свободного USDT. Объём позиции = маржа ×{' '}
             {draft.auto_leverage}. Сканер открывает сигнал, когда его уверенность от{' '}
-            {draft.auto_min_confidence}% и выше. После закрытия сделки эта пара отдыхает{' '}
-            {draft.pair_rest_hours} ч: новый сигнал по ней в автоторговлю не берётся. Ноль часов
-            отключает отдых. Если тейк сигнала больше 10% цены, сделка закрывается при плюсе{' '}
+            {draft.auto_min_confidence}% и выше. Тейк на бирже ставится на {draft.auto_tp_path_pct}%
+            пути от входа до тейка сигнала: 50 — вдвое ближе, 100 — как на карточке. Стоп не
+            сдвигается. После закрытия сделки эта пара отдыхает {draft.pair_rest_hours} ч: новый
+            сигнал по ней в автоторговлю не берётся. Ноль часов отключает отдых. Если тейк сигнала
+            больше 10% цены, сделка закрывается при плюсе{' '}
             {draft.auto_profit_close_pct}% ставки, не объёма с плечом. Ноль процентов это правило
             выключает. Итог берётся из проводок биржи. Когда срок жизни сигнала выходит, плюс на
             бирже закрывается сразу. Если в этот момент минус, сделка ждёт, пока плюс не станет

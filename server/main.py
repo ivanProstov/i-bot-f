@@ -65,6 +65,8 @@ DEFAULT_SETTINGS = {
     "pair_rest_hours": 2,
     # если тейк дальше 10% цены, закрыть сделку при таком плюсе от ставки
     "auto_profit_close_pct": 30,
+    # какой процент пути от входа до тейка сигнала ставить тейком на бирже
+    "auto_tp_path_pct": 50,
 }
 
 
@@ -829,6 +831,7 @@ class SettingsPatch(BaseModel):
     auto_min_confidence: int | None = None
     pair_rest_hours: float | None = None
     auto_profit_close_pct: float | None = None
+    auto_tp_path_pct: float | None = None
 
 
 @app.put("/api/settings")
@@ -860,6 +863,8 @@ async def put_settings(patch: SettingsPatch):
         data["pair_rest_hours"] = max(0.0, min(48.0, float(data["pair_rest_hours"])))
     if "auto_profit_close_pct" in data:
         data["auto_profit_close_pct"] = max(0.0, min(100.0, round(float(data["auto_profit_close_pct"]), 1)))
+    if "auto_tp_path_pct" in data:
+        data["auto_tp_path_pct"] = max(10.0, min(100.0, round(float(data["auto_tp_path_pct"]), 1)))
     SETTINGS.update(data)
     save_settings(SETTINGS)
     if SETTINGS.get("auto_trade"):

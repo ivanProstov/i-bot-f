@@ -73,6 +73,7 @@ export interface Settings {
   auto_min_confidence: number
   pair_rest_hours: number
   auto_profit_close_pct: number
+  auto_tp_path_pct: number
 }
 
 export interface DemoBucket {

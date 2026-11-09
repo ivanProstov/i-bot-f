@@ -35,9 +35,23 @@ def _num(value) -> float:
     return float(Decimal(str(value)))
 
 
+def _price(value: float) -> str:
+    return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
 def exit_target(margin: Decimal, commission: Decimal) -> Decimal:
     """Плюс, которого ждём после минуса: 1% ставки и комиссия, уже взятая биржей."""
     return margin * Decimal("0.01") + commission
+
+
+def take_on_path(entry: float, tp: float, path_pct: float) -> float:
+    """Цена тейка автосделки: доля пути от входа сигнала до его тейка."""
+    path = 100.0 if path_pct is None else float(path_pct)
+    if path >= 100 or entry <= 0 or tp <= 0:
+        return tp
+    path = min(100.0, max(10.0, path))
+    level = Decimal(str(entry)) + (Decimal(str(tp)) - Decimal(str(entry))) * Decimal(str(path)) / Decimal(100)
+    return float(level)
 
 
 def stake_profit_close(tp_pct: float, margin: Decimal, share_pct: float) -> float | None:
@@ -491,18 +505,32 @@ class AutoBook:
                     "На демо-счёте по этой паре уже есть позиция, бот её не трогает",
                 )
                 continue
+            path = settings.get("auto_tp_path_pct")
+            path = 50.0 if path is None else float(path)
+            trade_tp = take_on_path(float(signal["entry"]), float(signal["tp"]), path)
             try:
                 result = await open_position(
                     "demo", signal["symbol"], signal["side"],
-                    float(notional), leverage, float(signal["tp"]), float(signal["sl"]),
+                    float(notional), leverage, trade_tp, float(signal["sl"]),
                 )
             except TradeError as exc:
-                self._remember_skip(signal, leverage, pct, str(exc), status="error")
-                continue
+                if trade_tp != float(signal["tp"]) and "тейк" in str(exc).lower():
+                    trade_tp = float(signal["tp"])
+                    try:
+                        result = await open_position(
+                            "demo", signal["symbol"], signal["side"],
+                            float(notional), leverage, trade_tp, float(signal["sl"]),
+                        )
+                    except TradeError as again:
+                        self._remember_skip(signal, leverage, pct, str(again), status="error")
+                        continue
+                else:
+                    self._remember_skip(signal, leverage, pct, str(exc), status="error")
+                    continue
             except Exception as exc:
                 self.error = f"Не открыл демо-сделку: {exc}"
                 return
-            await self._remember_open(signal, result, leverage, pct, notional, settings)
+            await self._remember_open(signal, result, leverage, pct, notional, settings, trade_tp)
             opened += 1
         if opened:
             self.error = None
@@ -537,7 +565,8 @@ class AutoBook:
         })
 
     async def _remember_open(
-        self, signal: dict, result: dict, leverage: int, pct: Decimal, notional: Decimal, settings: dict,
+        self, signal: dict, result: dict, leverage: int, pct: Decimal, notional: Decimal,
+        settings: dict, trade_tp: float,
     ):
         order_id = result.get("order_id")
         fills = []
@@ -571,12 +600,22 @@ class AutoBook:
         share = settings.get("auto_profit_close_pct")
         share = 30.0 if share is None else float(share)
         goal = stake_profit_close(tp_pct, margin, share)
-        note = None
-        if goal is not None:
-            note = (
-                f"Тейк сигнала {tp_pct:.2f}% — закрою при плюсе {goal:.2f} USDT, "
-                f"это {share:g}% ставки, не объёма с плечом. Тейк по цене остаётся."
+        notes = []
+        signal_tp = float(signal.get("tp") or 0)
+        entry = float(signal.get("entry") or 0)
+        if signal_tp and entry and abs(trade_tp - signal_tp) / signal_tp > 0.0000001:
+            move = abs(trade_tp - entry) / entry * 100
+            span = abs(signal_tp - entry)
+            path_used = abs(trade_tp - entry) / span * 100 if span else 100
+            notes.append(
+                f"Тейк на бирже стоит на {path_used:.0f}% пути сигнала: {_price(trade_tp)} вместо {_price(signal_tp)}. "
+                f"Это {move:.2f}% цены. Стоп сигнала остаётся."
             )
+        if goal is not None:
+            notes.append(
+                f"Если плюс на бирже дойдёт до {goal:.2f} USDT, это {share:g}% ставки, закрою раньше."
+            )
+        note = " ".join(notes) or None
         self._add({
             "id": uuid.uuid4().hex[:10],
             "signal_id": signal["id"],
