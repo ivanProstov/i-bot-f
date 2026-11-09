@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сканер правил</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --card: #121722;
+        --text: #e7e9ee;
+        --muted: #8b93a7;
+        --line: #232a3a;
+        --gold: #f5c518;
+        --up: #2ebd85;
+        --down: #f6465d;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 "Segoe UI", system-ui, sans-serif; }
+      main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 64px; }
+      h1 { margin: 0 0 6px; font-size: 28px; }
+      .lead { margin: 0 0 22px; color: var(--muted); max-width: 760px; }
+      form, table { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+      form { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 14px; padding: 16px; align-items: end; }
+      label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
+      input, select, button { font: inherit; color: var(--text); background: #0d111a; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+      button { background: var(--gold); color: #1a1403; font-weight: 700; border: 0; height: 40px; cursor: pointer; }
+      button:disabled { opacity: 0.6; cursor: wait; }
+      .status { min-height: 24px; margin: 14px 0; color: var(--muted); }
+      .status.error { color: var(--down); }
+      .summary { font-size: 18px; margin: 0 0 16px; }
+      .scroll { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+      th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+      th { color: var(--muted); font-size: 13px; font-weight: 600; }
+      .pos { color: var(--up); }
+      .neg { color: var(--down); }
+      .hold td:first-child { box-shadow: inset 3px 0 var(--up); }
+      h2 { margin: 36px 0 8px; font-size: 22px; }
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 0 16px; }
+      .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+      .stat span { color: var(--muted); font-size: 13px; }
+      .stat b { display: block; margin-top: 4px; font-size: 26px; font-variant-numeric: tabular-nums; }
+      .chart { width: 100%; height: 200px; display: block; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+      .weeks { max-height: 420px; overflow: auto; margin-top: 16px; }
+      @media (max-width: 800px) {
+        form, .stats { grid-template-columns: 1fr 1fr; }
+        form button { grid-column: 1 / -1; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Прогон корзины</h1>
+      <p class="lead">
+        Считает, каким стал бы депозит, если раз в неделю бот торговал 14 крупных монет.
+        Лонг на 7 дней, когда за месяц выросли не меньше заданного числа. Шорт, когда столько же упали.
+        Смешанная неделя пропускается. Комиссия 0.10% и ставка финансирования уже внутри результата.
+      </p>
+      <form id="run">
+        <label>Депозит, USDT
+          <input name="capital" type="number" min="10" step="10" value="1000" />
+        </label>
+        <label>История, дней
+          <input name="days" type="number" min="60" max="1200" value="800" />
+        </label>
+        <label>Согласие, из 14
+          <input name="agree" type="number" min="8" max="14" value="11" />
+        </label>
+        <button id="run-go" type="submit">Прогнать</button>
+      </form>
+      <p class="status" id="run-status"></p>
+      <section id="run-out"></section>
+      <h2>Пересечение сверху</h2>
+      <p class="lead">
+        Часовые свечи, 14 крупных монет. Жёлтая средняя 7 сначала держится над розовой 25
+        хотя бы 6 часов и сама пересекает её вниз. Фиолетовая 99 в этот момент ещё ниже обеих.
+        Плюс за 6 часов до пересечения была красная свеча от 2% или две от 1.5%.
+        Короткое касание, как у ATOM 11 октября 06:00, не считается. Зелёным отмечено дальнейшее падение.
+      </p>
+      <form id="cross">
+        <label>Начало
+          <input name="start" type="date" required />
+        </label>
+        <label>Конец
+          <input name="end" type="date" required />
+        </label>
+        <button id="cross-go" type="submit">Найти пересечения</button>
+      </form>
+      <p class="status" id="cross-status"></p>
+      <section id="cross-out"></section>
+      <h2>Прогон средних</h2>
+      <p class="lead">
+        Жёлтая средняя 7, розовая 25, фиолетовая 99. Шорт, когда жёлтая и розовая за 8 свечей
+        падают круто и почти параллельно, а фиолетовая ещё выше и расстояние до них сокращается.
+        Выход через 16 свечей. Комиссия 0.10%. Депозит делится поровну на 14 крупных монет.
+      </p>
+      <form id="ma">
+        <label>Депозит, USDT
+          <input name="capital" type="number" min="10" step="10" value="1000" />
+        </label>
+        <label>Таймфрейм
+          <select name="timeframe">
+            <option value="15m">15 минут</option>
+            <option value="1h" selected>1 час</option>
+            <option value="4h">4 часа</option>
+          </select>
+        </label>
+        <label>История, дней
+          <input name="days" type="number" min="20" max="400" value="150" />
+        </label>
+        <label>Крутизна за 8 свечей, %
+          <input name="steep" type="number" min="0.2" max="5" step="0.1" value="0.5" />
+        </label>
+        <button id="ma-go" type="submit">Прогнать средние</button>
+      </form>
+      <p class="status" id="ma-status"></p>
+      <section id="ma-out"></section>
+      <h2>Другие правила</h2>
+      <p class="lead">
+        Проверяет простые правила на истории USDT-бессрочных Binance.
+        Вход по закрытию свечи, выход через заданное число свечей, сделки не накладываются.
+        Комиссия 0.10% за круг. Плюс считается только если правило было в плюсе и в первой части истории, и в последней.
+      </p>
+      <form id="form">
+        <label>Таймфрейм
+          <select name="timeframe">
+            <option value="15m" selected>15 минут</option>
+            <option value="1h">1 час</option>
+            <option value="4h">4 часа</option>
+          </select>
+        </label>
+        <label>История, дней
+          <input name="days" type="number" min="14" max="120" value="60" />
+        </label>
+        <label>Пар по объёму
+          <input name="top_n" type="number" min="5" max="50" value="30" />
+        </label>
+        <button id="go" type="submit">Проверить</button>
+      </form>
+      <p class="status" id="status"></p>
+      <section id="out"></section>
+    </main>
+    <script>
+      const runForm = document.querySelector("#run")
+      const runStatus = document.querySelector("#run-status")
+      const runOut = document.querySelector("#run-out")
+      const runButton = document.querySelector("#run-go")
+      const money = (value) => Number(value).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+      function chart(weeks) {
+        const values = weeks.map((week) => week.equity)
+        const min = Math.min(...values)
+        const max = Math.max(...values)
+        const span = max - min || 1
+        const width = 640
+        const height = 200
+        const points = values.map((value, index) => {
+          const x = values.length === 1 ? 0 : (index / (values.length - 1)) * width
+          const y = height - 12 - ((value - min) / span) * (height - 24)
+          return `${x.toFixed(1)},${y.toFixed(1)}`
+        }).join(" ")
+        return `<svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><polyline fill="none" stroke="#f5c518" stroke-width="2" points="${points}" /></svg>`
+      }
+
+      runForm.addEventListener("submit", async (event) => {
+        event.preventDefault()
+        const raw = new FormData(runForm)
+        runButton.disabled = true
+        runStatus.className = "status"
+        runStatus.textContent = "Считаю депозит по дневной истории Binance."
+        runOut.innerHTML = ""
+        try {
+          const response = await fetch("/api/backtest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              capital: Number(raw.get("capital")),
+              days: Number(raw.get("days")),
+              agree: Number(raw.get("agree")),
+            }),
+          })
+          const data = await response.json()
+          if (!response.ok) throw new Error(data.detail || "Не удалось прогнать")
+          const rows = data.weeks.map((week) => `
+            <tr>
+              <td>${week.date}</td>
+              <td class="${week.side === "лонг" ? "pos" : week.side === "шорт" ? "neg" : ""}">${week.side}</td>
+              <td>${week.agree} из ${week.coins}</td>
+              <td class="${cls(week.change)}">${week.change > 0 ? "+" : ""}${week.change.toFixed(2)}%</td>
+              <td>${money(week.equity)}</td>
+            </tr>`).join("")
+          runStatus.textContent = `Лонгов ${data.longs}, шортов ${data.shorts}, пропущено недель ${data.skipped}.`
+          runOut.innerHTML = `
+            <div class="stats">
+              <div class="stat"><span>Было</span><b>${money(data.capital)}</b></div>
+              <div class="stat"><span>Стало</span><b>${money(data.equity)}</b></div>
+              <div class="stat"><span>Прибыль</span><b class="${cls(data.profit)}">${data.profit > 0 ? "+" : ""}${money(data.profit)} · ${data.profit_pct > 0 ? "+" : ""}${data.profit_pct.toFixed(2)}%</b></div>
+              <div class="stat"><span>Худшая просадка</span><b class="neg">${data.drawdown_pct.toFixed(2)}%</b></div>
+            </div>
+            ${chart(data.weeks)}
+            <div class="scroll weeks"><table>
+              <thead><tr><th>Дата входа</th><th>Сторона</th><th>Выросли за месяц</th><th>Неделя</th><th>Депозит</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>`
+        } catch (error) {
+          runStatus.className = "status error"
+          runStatus.textContent = error.message
+        } finally {
+          runButton.disabled = false
+        }
+      })
+
+      const maForm = document.querySelector("#ma")
+      const maStatus = document.querySelector("#ma-status")
+      const maOut = document.querySelector("#ma-out")
+      const maButton = document.querySelector("#ma-go")
+      const signed = (value) => (value == null ? "—" : `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}%`)
+
+      maForm.addEventListener("submit", async (event) => {
+        event.preventDefault()
+        const raw = new FormData(maForm)
+        maButton.disabled = true
+        maStatus.className = "status"
+        maStatus.textContent = "Считаю шорт по жёлтой, розовой и фиолетовой средней."
+        maOut.innerHTML = ""
+        try {
+          const response = await fetch("/api/ma-backtest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              capital: Number(raw.get("capital")),
+              timeframe: raw.get("timeframe"),
+              days: Number(raw.get("days")),
+              steep: Number(raw.get("steep")),
+            }),
+          })
+          const data = await response.json()
+          if (!response.ok) throw new Error(data.detail || "Не удалось прогнать")
+          const cell = (stats) => `${stats.n} сделок, угадано ${stats.hit == null ? "—" : stats.hit + "%"}, средняя ${signed(stats.avg)}, типичная ${signed(stats.median)}`
+          const rows = data.trades.map((trade) => `
+            <tr>
+              <td>${trade.date}</td>
+              <td>${trade.symbol}</td>
+              <td>${trade.period}</td>
+              <td class="${cls(trade.change)}">${trade.change > 0 ? "+" : ""}${trade.change.toFixed(2)}%</td>
+              <td>${money(trade.equity)}</td>
+            </tr>`).join("")
+          maStatus.textContent = data.verdict
+          maOut.innerHTML = `
+            <div class="stats">
+              <div class="stat"><span>Позже, если начать заново</span><b class="${cls(data.late_profit)}">${data.late_profit > 0 ? "+" : ""}${money(data.late_profit)} · ${signed(data.late_profit_pct)}</b></div>
+              <div class="stat"><span>Позже, просадка</span><b class="neg">${Number(data.late_drawdown_pct).toFixed(2)}%</b></div>
+              <div class="stat"><span>Весь срок, стало</span><b>${money(data.equity)}</b></div>
+              <div class="stat"><span>Весь срок, просадка</span><b class="neg">${Number(data.drawdown_pct).toFixed(2)}%</b></div>
+            </div>
+            <p class="summary">Раньше: ${cell(data.early)}. Позже: ${cell(data.late)}.</p>
+            ${data.trades.length ? chart(data.trades) : ""}
+            <div class="scroll weeks"><table>
+              <thead><tr><th>Вход, UTC</th><th>Монета</th><th>Кусок</th><th>Шорт</th><th>Депозит</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>`
+        } catch (error) {
+          maStatus.className = "status error"
+          maStatus.textContent = error.message
+        } finally {
+          maButton.disabled = false
+        }
+      })
+
+      const crossForm = document.querySelector("#cross")
+      const crossStatus = document.querySelector("#cross-status")
+      const crossOut = document.querySelector("#cross-out")
+      const crossButton = document.querySelector("#cross-go")
+      const dayInput = (input, shift) => {
+        const date = new Date(Date.now() + shift * 86400000)
+        input.value = date.toISOString().slice(0, 10)
+      }
+      dayInput(crossForm.elements.start, -30)
+      dayInput(crossForm.elements.end, 0)
+      const px = (value) => Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 8 })
+      const moveCell = (value) => (value == null ? "—" : `<span class="${value < 0 ? "pos" : value > 0 ? "neg" : ""}">${value > 0 ? "+" : ""}${value.toFixed(2)}%</span>`)
+
+      crossForm.addEventListener("submit", async (event) => {
+        event.preventDefault()
+        const raw = new FormData(crossForm)
+        crossButton.disabled = true
+        crossStatus.className = "status"
+        crossStatus.textContent = "Ищу пересечение сверху после большой красной свечи."
+        crossOut.innerHTML = ""
+        try {
+          const response = await fetch("/api/ma-cross", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ start: raw.get("start"), end: raw.get("end") }),
+          })
+          const rawText = await response.text()
+          let data
+          try { data = JSON.parse(rawText) } catch { throw new Error("Сервер не ответил отчётом") }
+          if (!response.ok) throw new Error(data.detail || "Не удалось посчитать")
+          const line = (title, pack) => `${title}: ${pack.n ? `${pack.down}% случаев цена ниже, средний ход ${pack.avg > 0 ? "+" : ""}${pack.avg}%` : "ещё нет"}`
+          const pile = (key) => {
+            const values = data.rows.map((row) => row[key]).filter((value) => value != null)
+            return {
+              green: values.filter((value) => value < 0).reduce((sum, value) => sum + value, 0),
+              red: values.filter((value) => value > 0).reduce((sum, value) => sum + value, 0),
+            }
+          }
+          const pileText = (value) => `${value > 0 ? "+" : ""}${value.toFixed(2)}%`
+          const hour8 = pile("move_8")
+          const hour24 = pile("move_24")
+          const rows = data.rows.map((row) => `
+            <tr>
+              <td>${row.pair}</td>
+              <td>${row.time_msk}</td>
+              <td>${row.time_utc}</td>
+              <td>${px(row.open)}</td>
+              <td>${px(row.high)}</td>
+              <td>${px(row.low)}</td>
+              <td>${px(row.close)}</td>
+              <td>${row.big_time_msk} · ${row.big_body.toFixed(2)}%</td>
+              <td>${moveCell(row.move_8)}</td>
+              <td>${moveCell(row.move_24)}</td>
+            </tr>`).join("")
+          crossStatus.textContent = data.verdict
+          crossOut.innerHTML = `
+            <p class="summary">Совпадений: ${data.count}. ${line("Через 8 часов", data.move_8)}. ${line("Через 24 часа", data.move_24)}. Шорт после комиссии 0.10%: через 8 часов средний ${signed(data.short_8.avg)}, типичный ${signed(data.short_8.median)}; через 24 часа средний ${signed(data.short_24.avg)}, типичный ${signed(data.short_24.median)}.</p>
+            <div class="stats">
+              <div class="stat"><span>8 ч, сумма зелёных</span><b class="pos">${pileText(hour8.green)}</b></div>
+              <div class="stat"><span>8 ч, сумма красных</span><b class="neg">${pileText(hour8.red)}</b></div>
+              <div class="stat"><span>24 ч, сумма зелёных</span><b class="pos">${pileText(hour24.green)}</b></div>
+              <div class="stat"><span>24 ч, сумма красных</span><b class="neg">${pileText(hour24.red)}</b></div>
+            </div>
+            <div class="scroll weeks"><table>
+              <thead><tr>
+                <th>Пара</th><th>Свеча, МСК</th><th>Свеча, UTC</th>
+                <th>Открытие</th><th>Макс</th><th>Мин</th><th>Закрытие</th>
+                <th>Большая свеча до этого</th>
+                <th>Цена через 8 ч</th><th>Цена через 24 ч</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="8">Сумма зелёных</td>
+                  <td class="pos">${pileText(hour8.green)}</td>
+                  <td class="pos">${pileText(hour24.green)}</td>
+                </tr>
+                <tr>
+                  <td colspan="8">Сумма красных</td>
+                  <td class="neg">${pileText(hour8.red)}</td>
+                  <td class="neg">${pileText(hour24.red)}</td>
+                </tr>
+              </tfoot>
+            </table></div>`
+        } catch (error) {
+          crossStatus.className = "status error"
+          crossStatus.textContent = error.message
+        } finally {
+          crossButton.disabled = false
+        }
+      })
+
+      const form = document.querySelector("#form")
+      const status = document.querySelector("#status")
+      const out = document.querySelector("#out")
+      const button = document.querySelector("#go")
+      const cls = (value) => (value > 0 ? "pos" : value < 0 ? "neg" : "")
+      const pct = (value) => (value == null ? "—" : `${value > 0 ? "+" : ""}${Number(value).toFixed(3)}%`)
+      const sum = (value) => (value == null ? "—" : `${value > 0 ? "+" : ""}${Number(value).toFixed(1)}%`)
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault()
+        const raw = new FormData(form)
+        button.disabled = true
+        status.className = "status"
+        status.textContent = "Считаю правила по истории Binance."
+        out.innerHTML = ""
+        try {
+          const response = await fetch("/api/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              timeframe: raw.get("timeframe"),
+              days: Number(raw.get("days")),
+              top_n: Number(raw.get("top_n")),
+            }),
+          })
+          const data = await response.json()
+          if (!response.ok) throw new Error(data.detail || "Не удалось посчитать")
+          const held = data.rules.filter((row) => row.holds).length
+          status.textContent = `Пар: ${data.pairs}. Правил в плюсе на позднем периоде: ${held} из ${data.rules.length}.`
+          const rows = data.rules.map((row) => `
+            <tr class="${row.holds ? "hold" : ""}">
+              <td>${row.holds ? "плюс" : ""}</td>
+              <td>${row.name}</td>
+              <td>${data.labels[row.horizon]}</td>
+              <td>${row.train.n}</td>
+              <td class="${cls(row.train.avg)}">${pct(row.train.avg)}</td>
+              <td class="${cls(row.train.median)}">${pct(row.train.median)}</td>
+              <td>${row.test.n}</td>
+              <td>${row.test.hit == null ? "—" : row.test.hit + "%"}</td>
+              <td class="${cls(row.test.avg)}">${pct(row.test.avg)}</td>
+              <td class="${cls(row.test.median)}">${pct(row.test.median)}</td>
+              <td class="${cls(row.test.sum)}">${sum(row.test.sum == null ? null : row.test.sum / data.pairs)}</td>
+            </tr>`).join("")
+          out.innerHTML = `
+            <p class="summary">${data.summary}</p>
+            <div class="scroll"><table>
+              <thead><tr>
+                <th></th><th>Правило</th><th>Держим</th>
+                <th>Раньше, сделок</th><th>Средняя</th><th>Типичная</th>
+                <th>Позже, сделок</th><th>Угадано</th><th>Средняя</th><th>Типичная</th><th>На одну пару</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>`
+        } catch (error) {
+          status.className = "status error"
+          status.textContent = error.message
+        } finally {
+          button.disabled = false
+        }
+      })
+    </script>
+  </body>
+</html>

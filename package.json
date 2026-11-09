@@ -1,0 +1,10 @@
+{
+  "name": "futures-signal-bot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Бот сигналов для Binance Futures: Python-сканер + React-интерфейс",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs"
+  }
+}

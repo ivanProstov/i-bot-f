@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сканер резких свечей</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --card: #121722;
+        --text: #e7e9ee;
+        --muted: #8b93a7;
+        --line: #232a3a;
+        --gold: #f5c518;
+        --up: #2ebd85;
+        --down: #f6465d;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.5 "Segoe UI", system-ui, sans-serif;
+      }
+      main { max-width: 1200px; margin: 0 auto; padding: 28px 20px 64px; }
+      h1 { margin: 0 0 6px; font-size: 28px; }
+      .lead { margin: 0 0 22px; color: var(--muted); max-width: 720px; }
+      form, .card, table { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+      form { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 14px; padding: 16px; align-items: end; }
+      label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
+      input, select, button {
+        font: inherit;
+        color: var(--text);
+        background: #0d111a;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      button {
+        background: var(--gold);
+        color: #1a1403;
+        font-weight: 700;
+        cursor: pointer;
+        border: 0;
+        height: 40px;
+      }
+      button:disabled { opacity: 0.6; cursor: wait; }
+      .status { min-height: 24px; margin: 14px 0; color: var(--muted); }
+      .status.error { color: var(--down); }
+      .summary { font-size: 18px; margin: 0 0 18px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .card { padding: 16px 18px; }
+      .card h2 { margin: 0 0 4px; font-size: 18px; }
+      .up h2 { color: var(--up); }
+      .down h2 { color: var(--down); }
+      .meta { color: var(--muted); margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; overflow: hidden; }
+      th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+      th:first-child, td:first-child { text-align: left; }
+      th { color: var(--muted); font-weight: 600; font-size: 13px; }
+      .pos { color: var(--up); }
+      .neg { color: var(--down); }
+      h3 { margin: 28px 0 10px; }
+      h4 { margin: 16px 0 8px; font-size: 14px; color: var(--muted); }
+      .empty, .sub { color: var(--muted); }
+      .scroll { overflow-x: auto; }
+      @media (max-width: 800px) {
+        form, .grid { grid-template-columns: 1fr 1fr; }
+        form button { grid-column: 1 / -1; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Сканер резких свечей</h1>
+      <p class="lead">
+        Ищет на Binance Futures одну свечу с резким ходом и считает, куда закрывались
+        следующие свечи. К каждой свече добавлены доля рыночных покупок, изменение
+        открытого интереса, ход BTC за ту же свечу и место цены в диапазоне суток.
+      </p>
+      <form id="form">
+        <label>Таймфрейм
+          <select name="timeframe">
+            <option value="5m">5 минут</option>
+            <option value="15m" selected>15 минут</option>
+            <option value="1h">1 час</option>
+            <option value="4h">4 часа</option>
+          </select>
+        </label>
+        <label>Ход свечи, от %
+          <input name="threshold_pct" type="number" min="0.5" max="30" step="0.5" value="3" />
+        </label>
+        <label>История, дней
+          <input name="days" type="number" min="1" max="90" value="14" />
+        </label>
+        <label>Пар по объёму
+          <input name="top_n" type="number" min="5" max="80" value="40" />
+        </label>
+        <button id="go" type="submit">Сканировать</button>
+      </form>
+      <p class="status" id="status"></p>
+      <section id="out"></section>
+    </main>
+    <script>
+      const form = document.querySelector("#form")
+      const status = document.querySelector("#status")
+      const out = document.querySelector("#out")
+      const button = document.querySelector("#go")
+
+      const cls = (value) => (value > 0 ? "pos" : value < 0 ? "neg" : "")
+      const signed = (value) => `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}%`
+      const times = (value) => (value == null ? "—" : `${Number(value).toFixed(2)}×`)
+      const num = (value, digits = 2) => (value == null ? "—" : signed(Number(value)))
+      const usdt = (value) => {
+        const n = Number(value) || 0
+        if (n >= 1e9) return `${(n / 1e9).toFixed(1)} млрд`
+        if (n >= 1e6) return `${(n / 1e6).toFixed(1)} млн`
+        if (n >= 1e3) return `${(n / 1e3).toFixed(0)} тыс`
+        return `${n.toFixed(0)}`
+      }
+
+      function table(bucket, labels) {
+        const rows = Object.entries(bucket.horizons).map(([key, item]) => `
+          <tr>
+            <td>через ${labels[key]}</td>
+            <td>${item.n}</td>
+            <td class="${cls(item.mean)}">${signed(item.mean)}</td>
+            <td class="${cls(item.median)}">${signed(item.median)}</td>
+            <td>${item.continuation_pct}%</td>
+            <td class="pos">+${item.mean_mfe.toFixed(2)}%</td>
+            <td class="neg">−${item.median_mae.toFixed(2)}%</td>
+            <td>${times(item.median_vol_x)}</td>
+          </tr>`)
+        if (!rows.length) return `<p class="empty">Таких свечей не было.</p>`
+        return `<div class="scroll"><table>
+          <thead><tr>
+            <th>После закрытия</th><th>Случаев</th><th>Средний ход</th><th>Медиана</th>
+            <th>Продолжение</th><th>Средний максимум в сторону</th><th>Типичный ход против</th>
+            <th>Объём свечи</th>
+          </tr></thead>
+          <tbody>${rows.join("")}</tbody>
+        </table></div>`
+      }
+
+      function volumeSplit(bucket) {
+        const rows = [
+          ["≥ 2× обычного", bucket.by_volume?.high],
+          ["ниже 2×", bucket.by_volume?.low],
+        ].map(([title, item]) => {
+          if (!item || !item.count) return `<tr><td>${title}</td><td colspan="4" class="empty">нет</td></tr>`
+          return `<tr>
+            <td>${title}</td>
+            <td>${item.count}</td>
+            <td>${times(item.median_volume_x)}</td>
+            <td>${item.continuation_pct}%</td>
+            <td class="${cls(item.median)}">${signed(item.median)}</td>
+          </tr>`
+        })
+        return `<h4>Объём импульса и следующая свеча</h4>
+          <div class="scroll"><table>
+            <thead><tr>
+              <th>Объём</th><th>Случаев</th><th>Типичная кратность</th><th>Продолжение</th><th>Закрытие</th>
+            </tr></thead>
+            <tbody>${rows.join("")}</tbody>
+          </table></div>`
+      }
+
+      function contextTable(bucket, labels) {
+        const later = labels["3"] || labels["2"] || ""
+        const cell = (rate, median) => (rate == null ? "мало данных" : `${rate}% · ${signed(median)}`)
+        const rows = (bucket.context || []).map((item) => `
+          <tr>
+            <td>${item.label}</td>
+            <td>${item.count}</td>
+            <td>${cell(item.continuation_pct, item.median)}</td>
+            <td>${cell(item.later_continuation_pct, item.later_median)}</td>
+          </tr>`).join("")
+        return `<h4>Кто двигал цену</h4>
+          <div class="scroll"><table>
+            <thead><tr>
+              <th>Условие</th><th>Случаев</th><th>Следующая свеча</th><th>Через ${later}</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+          <p class="sub">Тейкеры в сторону — от 55% объёма рыночными заявками в сторону свечи. BTC в ту же сторону — заметный ход BTC за эту свечу. Край дня — верхние или нижние 20% диапазона последних суток.</p>`
+      }
+
+      function factorLine(bucket) {
+        const buy = bucket.median_taker_buy == null ? "—" : `${bucket.median_taker_buy.toFixed(0)}%`
+        const range = bucket.median_range == null ? "—" : `${bucket.median_range.toFixed(0)}%`
+        return `Покупки ${buy}. ОИ ${num(bucket.median_oi)}. BTC ${num(bucket.median_btc)}. Место в дне ${range}.`
+      }
+
+      function events(data) {
+        if (!data.events.length) return ""
+        const keys = Object.keys(data.horizon_labels)
+        const head = keys.map((key) => `<th>через ${data.horizon_labels[key]}</th>`).join("")
+        const rows = data.events.map((event) => {
+          const when = new Date(event.time).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+          const cells = keys.map((key) => {
+            const item = event.after[key]
+            if (!item) return "<td>—</td>"
+            return `<td class="${cls(item.fwd)}">${signed(item.fwd)}</td>`
+          }).join("")
+          return `<tr>
+            <td>${when}</td>
+            <td>${event.symbol}</td>
+            <td class="${event.direction === "up" ? "pos" : "neg"}">${event.direction === "up" ? "вверх" : "вниз"} ${signed(event.move)}</td>
+            <td>${usdt(event.volume)} <span class="sub">${times(event.volume_x)}</span></td>
+            <td>${event.taker_buy == null ? "—" : `${event.taker_buy.toFixed(0)}%`}</td>
+            <td class="${cls(event.oi_change)}">${num(event.oi_change)}</td>
+            <td class="${cls(event.btc_move)}">${num(event.btc_move)}</td>
+            <td>${event.range_pos == null ? "—" : `${event.range_pos}%`}</td>
+            ${cells}
+          </tr>`
+        }).join("")
+        return `<h3>Самые большие свечи</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Время</th><th>Пара</th><th>Свеча</th><th>Объём</th><th>Покупки</th><th>ОИ</th><th>BTC</th><th>День</th>${head}</tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>`
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault()
+        const raw = new FormData(form)
+        const tf = raw.get("timeframe")
+        const horizons = tf === "4h" ? [1, 2, 6] : tf === "1h" ? [1, 2, 3, 4] : tf === "5m" ? [1, 3, 6, 12] : [1, 2, 3, 4]
+        button.disabled = true
+        status.className = "status"
+        status.textContent = "Сканирую историю Binance. Это может занять около минуты."
+        out.innerHTML = ""
+        try {
+          const response = await fetch("/api/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              timeframe: tf,
+              threshold_pct: Number(raw.get("threshold_pct")),
+              days: Number(raw.get("days")),
+              top_n: Number(raw.get("top_n")),
+              horizons,
+            }),
+          })
+          const data = await response.json()
+          if (!response.ok) throw new Error(data.detail || "Не удалось просканировать")
+          status.textContent = `Пар: ${data.scanned_pairs}. Свечей вверх: ${data.up.count}, вниз: ${data.down.count}.`
+          out.innerHTML = `
+            <p class="summary">${data.summary}</p>
+            <div class="grid">
+              <article class="card up">
+                <h2>Пробитие вверх</h2>
+                <p class="meta">${data.up.count} свечей, средний ход +${data.up.avg_move.toFixed(2)}%. Объём ${usdt(data.up.median_volume)} USDT, ${times(data.up.median_volume_x)} обычной свечи. ${factorLine(data.up)}</p>
+                ${table(data.up, data.horizon_labels)}
+                ${volumeSplit(data.up)}
+                ${contextTable(data.up, data.horizon_labels)}
+              </article>
+              <article class="card down">
+                <h2>Пробитие вниз</h2>
+                <p class="meta">${data.down.count} свечей, средний ход −${data.down.avg_move.toFixed(2)}%. Объём ${usdt(data.down.median_volume)} USDT, ${times(data.down.median_volume_x)} обычной свечи. ${factorLine(data.down)}</p>
+                ${table(data.down, data.horizon_labels)}
+                ${volumeSplit(data.down)}
+                ${contextTable(data.down, data.horizon_labels)}
+              </article>
+            </div>
+            ${events(data)}`
+        } catch (error) {
+          status.className = "status error"
+          status.textContent = error.message
+        } finally {
+          button.disabled = false
+        }
+      })
+    </script>
+  </body>
+</html>

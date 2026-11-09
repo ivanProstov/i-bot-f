@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 32% 5%;
+    --foreground: 220 14% 92%;
+    --card: 221 26% 8%;
+    --card-foreground: 220 14% 92%;
+    --popover: 221 26% 8%;
+    --popover-foreground: 220 14% 92%;
+    --primary: 46 96% 50%;
+    --primary-foreground: 222 32% 5%;
+    --secondary: 220 16% 14%;
+    --secondary-foreground: 220 14% 92%;
+    --muted: 220 16% 14%;
+    --muted-foreground: 219 10% 58%;
+    --accent: 220 16% 16%;
+    --accent-foreground: 220 14% 92%;
+    --destructive: 351 89% 62%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 15% 15%;
+    --input: 220 15% 15%;
+    --ring: 46 96% 50%;
+    --radius: 0.625rem;
+    --long: 162 62% 46%;
+    --short: 351 89% 62%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    background-color: hsl(var(--background));
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Space Grotesk", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  .font-mono,
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.25);
+  }
+}
+
+/* тонкая тикерная пульсация статуса */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.dot-live {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-live { animation: none; }
+}
