@@ -6,10 +6,13 @@ import Signals from '@/sections/Signals'
 import Market from '@/sections/Market'
 import SettingsPanel from '@/sections/SettingsPanel'
 import DemoTrades from '@/sections/DemoTrades'
-import { api } from '@/lib/api'
+import { api, AuthError } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import type { DemoReport, PairRow, Signal, Status } from '@/types'
 
 export default function Home() {
+  const { role, logout } = useAuth()
+  const readOnly = role === 'view'
   const [status, setStatus] = useState<Status | null>(null)
   const [signals, setSignals] = useState<Signal[]>([])
   const [pairs, setPairs] = useState<PairRow[]>([])
@@ -30,7 +33,8 @@ export default function Home() {
       setPairs(pr.pairs)
       setDemo(deals)
       setBackendDown(false)
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthError) return
       setBackendDown(true)
     }
   }, [])
@@ -55,7 +59,14 @@ export default function Home() {
 
   return (
     <div className="mx-auto min-h-dvh max-w-7xl px-4 py-6 md:px-8">
-      <Header status={status} backendDown={backendDown} onToggle={toggle} onScanNow={scanNow} />
+      <Header
+        status={status}
+        backendDown={backendDown}
+        readOnly={readOnly}
+        onToggle={toggle}
+        onScanNow={scanNow}
+        onLogout={logout}
+      />
 
       {backendDown ? (
         <div className="mt-4 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
@@ -84,10 +95,17 @@ export default function Home() {
           <TabsTrigger value="signals" className="cursor-pointer">Сигналы</TabsTrigger>
           <TabsTrigger value="market" className="cursor-pointer">Рынок</TabsTrigger>
           <TabsTrigger value="demo" className="cursor-pointer">Демо-сделки</TabsTrigger>
-          <TabsTrigger value="settings" className="cursor-pointer">Настройки</TabsTrigger>
+          {readOnly ? null : (
+            <TabsTrigger value="settings" className="cursor-pointer">Настройки</TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="signals" className="mt-6">
-          <Signals signals={signals} demoTrades={demo?.trades ?? []} onUpdated={refresh} />
+          <Signals
+            signals={signals}
+            demoTrades={demo?.trades ?? []}
+            onUpdated={refresh}
+            readOnly={readOnly}
+          />
         </TabsContent>
         <TabsContent value="market" className="mt-6">
           <Market pairs={pairs} />
@@ -95,14 +113,16 @@ export default function Home() {
         <TabsContent value="demo" className="mt-6">
           <DemoTrades report={demo} />
         </TabsContent>
-        <TabsContent value="settings" className="mt-6">
-          {status ? (
-            <SettingsPanel
-              settings={status.settings}
-              onSaved={(s) => setStatus({ ...status, settings: s })}
-            />
-          ) : null}
-        </TabsContent>
+        {readOnly ? null : (
+          <TabsContent value="settings" className="mt-6">
+            {status ? (
+              <SettingsPanel
+                settings={status.settings}
+                onSaved={(s) => setStatus({ ...status, settings: s })}
+              />
+            ) : null}
+          </TabsContent>
+        )}
       </Tabs>
 
       <footer className="mt-10 border-t border-border pt-5 text-xs leading-relaxed text-muted-foreground">

@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .auth import AuthMiddleware, role_for, configured
 from .autotrade import book
 from .trade import TradeError, keys_status, open_position, save_keys
 
@@ -654,8 +655,24 @@ scanner = Scanner()
 
 # ---------------------------------------------------------------- API
 app = FastAPI(title="Binance Futures Signal Bot")
+# Сначала авторизация, снаружи CORS: отказ тоже должен уйти в браузер с нужными заголовками.
+app.add_middleware(AuthMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
+
+
+class LoginIn(BaseModel):
+    token: str = ""
+
+
+@app.post("/api/auth/login")
+def login(body: LoginIn):
+    if not configured():
+        raise HTTPException(503, "Токены локатора не заданы: LOCATOR_TOKEN и LOCATOR_VIEW_TOKEN")
+    role = role_for(body.token)
+    if role is None:
+        raise HTTPException(401, "Неверный токен")
+    return {"role": role}
 
 
 @app.on_event("startup")

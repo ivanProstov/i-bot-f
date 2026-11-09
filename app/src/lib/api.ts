@@ -1,10 +1,34 @@
 import type { DemoReport, PairRow, Settings, Signal, Status } from '@/types'
 
+const TOKEN_KEY = 'locator-token'
+
+export type AuthRole = 'full' | 'view'
+
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AuthError'
+  }
+}
+
+export function authToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? ''
+}
+
+export function setAuthToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
+  const headers = new Headers(init?.headers)
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const token = authToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const r = await fetch(path, { ...init, headers })
   if (!r.ok) {
     let detail = `${r.status} ${r.statusText}`
     try {
@@ -12,6 +36,11 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof body?.detail === 'string') detail = body.detail
     } catch {
       /* ответ без json */
+    }
+    if (r.status === 401 && path !== '/api/auth/login') {
+      clearAuthToken()
+      window.dispatchEvent(new Event('locator-unauthorized'))
+      throw new AuthError(detail)
     }
     throw new Error(detail)
   }
@@ -34,6 +63,8 @@ export interface TradeResult {
 }
 
 export const api = {
+  login: (token: string) =>
+    req<{ role: AuthRole }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ token }) }),
   status: () => req<Status>('/api/status'),
   signals: () => req<{ signals: Signal[] }>('/api/signals'),
   refreshSignal: (id: string) => req<Signal>(`/api/signals/${id}/refresh`, { method: 'POST' }),

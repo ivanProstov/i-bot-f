@@ -8,3 +8,4 @@ app/dist/
 server/keys.json
 server/history.json
 server/trades.json
+.env

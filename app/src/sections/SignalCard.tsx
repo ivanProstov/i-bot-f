@@ -35,10 +35,12 @@ export default function SignalCard({
   signal: s,
   demoTrade = null,
   onUpdated,
+  readOnly = false,
 }: {
   signal: Signal
   demoTrade?: DemoTrade | null
   onUpdated?: () => void
+  readOnly?: boolean
 }) {
   const isLong = s.side === 'LONG'
   const meta = STATUS_META[s.status]
@@ -185,7 +187,7 @@ export default function SignalCard({
         </ul>
       ) : null}
 
-      {s.status === 'active' ? (
+      {s.status === 'active' && !readOnly ? (
         <Button
           variant="outline"
           size="sm"
@@ -218,24 +220,26 @@ export default function SignalCard({
         </div>
       ) : null}
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setTrade('demo')}
-          className="cursor-pointer"
-        >
-          Открыть демо
-        </Button>
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={() => setTrade('live')}
-          className="cursor-pointer"
-        >
-          Открыть реал
-        </Button>
-      </div>
+      {readOnly ? null : (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTrade('demo')}
+            className="cursor-pointer"
+          >
+            Открыть демо
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setTrade('live')}
+            className="cursor-pointer"
+          >
+            Открыть реал
+          </Button>
+        </div>
+      )}
       <div className="mt-2 flex justify-between text-xs text-muted-foreground">
         <a
           href={futuresUrl('demo.binance.com', s.symbol)}

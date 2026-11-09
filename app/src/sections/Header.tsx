@@ -1,4 +1,4 @@
-import { Activity, Pause, Play, RefreshCw } from 'lucide-react'
+import { Activity, LogOut, Pause, Play, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { timeAgo } from '@/lib/api'
 import type { Status } from '@/types'
@@ -6,11 +6,13 @@ import type { Status } from '@/types'
 interface Props {
   status: Status | null
   backendDown: boolean
+  readOnly: boolean
   onToggle: () => void
   onScanNow: () => void
+  onLogout: () => void
 }
 
-export default function Header({ status, backendDown, onToggle, onScanNow }: Props) {
+export default function Header({ status, backendDown, readOnly, onToggle, onScanNow, onLogout }: Props) {
   const running = status?.running ?? false
   const stats = status?.stats
 
@@ -80,32 +82,43 @@ export default function Header({ status, backendDown, onToggle, onScanNow }: Pro
         ) : null}
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onScanNow}
-            disabled={backendDown || !running || status?.scanning}
-            className="cursor-pointer"
-          >
-            <RefreshCw className={`mr-1.5 h-4 w-4 ${status?.scanning ? 'animate-spin' : ''}`} />
-            Сканировать
-          </Button>
-          <Button
-            size="sm"
-            variant={running ? 'secondary' : 'default'}
-            onClick={onToggle}
-            disabled={backendDown}
-            className="cursor-pointer"
-          >
-            {running ? (
-              <>
-                <Pause className="mr-1.5 h-4 w-4" /> Пауза
-              </>
-            ) : (
-              <>
-                <Play className="mr-1.5 h-4 w-4" /> Запустить
-              </>
-            )}
+          {readOnly ? (
+            <span className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground">
+              Только просмотр
+            </span>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onScanNow}
+                disabled={backendDown || !running || status?.scanning}
+                className="cursor-pointer"
+              >
+                <RefreshCw className={`mr-1.5 h-4 w-4 ${status?.scanning ? 'animate-spin' : ''}`} />
+                Сканировать
+              </Button>
+              <Button
+                size="sm"
+                variant={running ? 'secondary' : 'default'}
+                onClick={onToggle}
+                disabled={backendDown}
+                className="cursor-pointer"
+              >
+                {running ? (
+                  <>
+                    <Pause className="mr-1.5 h-4 w-4" /> Пауза
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-1.5 h-4 w-4" /> Запустить
+                  </>
+                )}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" size="sm" onClick={onLogout} className="cursor-pointer">
+            <LogOut className="mr-1.5 h-4 w-4" /> Выйти
           </Button>
         </div>
       </div>

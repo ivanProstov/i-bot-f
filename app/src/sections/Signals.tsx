@@ -9,10 +9,12 @@ export default function Signals({
   signals,
   demoTrades = [],
   onUpdated,
+  readOnly = false,
 }: {
   signals: Signal[]
   demoTrades?: DemoTrade[]
   onUpdated?: () => void
+  readOnly?: boolean
 }) {
   const [filter, setFilter] = useState<Filter>('active')
 
@@ -59,6 +61,7 @@ export default function Signals({
               key={s.id}
               signal={s}
               onUpdated={onUpdated}
+              readOnly={readOnly}
               demoTrade={
                 demoTrades.find((trade) => trade.signal_id === s.id && trade.status === 'open') ??
                 demoTrades.find((trade) => trade.signal_id === s.id && trade.status === 'closed') ??
