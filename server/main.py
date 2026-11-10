@@ -742,6 +742,7 @@ def status():
 def _public_signal(signal: dict) -> dict:
     row = dict(signal)
     row["rest_until"] = book.pair_rest_until(signal["symbol"], SETTINGS)
+    row["demo_trade"] = book.trade_for_signal(signal["id"])
     return row
 
 
@@ -880,6 +881,40 @@ async def put_settings(patch: SettingsPatch):
 @app.get("/api/demo-trades")
 def demo_trades():
     return book.report()
+
+
+@app.get("/api/demo-trades/page")
+def demo_trades_page(
+    page: int = 1,
+    page_size: int = 20,
+    symbol: str = "",
+    side: str = "",
+    status: str = "",
+    reverse: str = "",
+    style: str = "",
+    result: str = "",
+    weekday: int | None = None,
+    hour: int | None = None,
+    sort: str = "opened_at",
+    order: str = "desc",
+):
+    try:
+        return book.page(
+            page=page,
+            page_size=page_size,
+            symbol=symbol,
+            side=side,
+            status=status,
+            reverse=reverse,
+            style=style,
+            result=result,
+            weekday=weekday,
+            hour=hour,
+            sort=sort,
+            order=order,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/demo-trades/{trade_id}/close")

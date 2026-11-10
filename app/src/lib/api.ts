@@ -1,4 +1,4 @@
-import type { DemoReport, DemoTrade, PairRow, RestingPair, Settings, Signal, SignalHistory, Status } from '@/types'
+import type { DemoReport, DemoTrade, DemoTradePage, PairRow, RestingPair, Settings, Signal, SignalHistory, Status } from '@/types'
 
 const TOKEN_KEY = 'locator-token'
 
@@ -77,6 +77,34 @@ export const api = {
     }),
   pairs: () => req<{ pairs: PairRow[] }>('/api/pairs'),
   demoTrades: () => req<DemoReport>('/api/demo-trades'),
+  demoTradePage: (query: {
+    page: number
+    symbol?: string
+    side?: string
+    status?: string
+    reverse?: string
+    style?: string
+    result?: string
+    weekday?: number | null
+    hour?: number | null
+    sort?: string
+    order?: string
+  }) => {
+    const params = new URLSearchParams()
+    params.set('page', String(query.page))
+    params.set('page_size', '20')
+    if (query.symbol) params.set('symbol', query.symbol)
+    if (query.side) params.set('side', query.side)
+    if (query.status) params.set('status', query.status)
+    if (query.reverse) params.set('reverse', query.reverse)
+    if (query.style) params.set('style', query.style)
+    if (query.result) params.set('result', query.result)
+    if (query.weekday != null) params.set('weekday', String(query.weekday))
+    if (query.hour != null) params.set('hour', String(query.hour))
+    params.set('sort', query.sort || 'opened_at')
+    params.set('order', query.order || 'desc')
+    return req<DemoTradePage>(`/api/demo-trades/page?${params}`)
+  },
   closeDemoTrade: (id: string) =>
     req<DemoTrade>(`/api/demo-trades/${id}/close`, { method: 'POST' }),
   setProfitClose: (id: string, usdt: number | null) =>

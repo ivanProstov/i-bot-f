@@ -1,3 +1,14 @@
+import { useEffect, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -6,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { api } from '@/lib/api'
 import type { DemoBucket, DemoReport, DemoTrade } from '@/types'
 import CloseDemoButton from './CloseDemoButton'
 import ProfitCloseField from './ProfitCloseField'
@@ -52,15 +64,40 @@ function msk(ts: number | null): { clock: string; day: string } {
   }
 }
 
+const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+const PAGE_SIZE = 20
+
+type SortField = 'opened_at' | 'weekday' | 'symbol' | 'gross_pnl' | 'commission' | 'funding' | 'net_pnl'
+type SortOrder = 'asc' | 'desc'
+
+function pageWindow(current: number, count: number): Array<number | 'gap'> {
+  if (count <= 7) return Array.from({ length: count }, (_, index) => index + 1)
+  const wanted = [1, count, current - 1, current, current + 1].filter(
+    (page) => page >= 1 && page <= count,
+  )
+  const pages = [...new Set(wanted)].sort((a, b) => a - b)
+  const window: Array<number | 'gap'> = []
+  for (const page of pages) {
+    const prev = window[window.length - 1]
+    if (typeof prev === 'number' && page - prev > 1) window.push('gap')
+    window.push(page)
+  }
+  return window
+}
+
 function BucketGrid({
   title,
   buckets,
   bestKey,
+  selectedKey,
+  onPick,
   suffix,
 }: {
   title: string
   buckets: DemoBucket[]
   bestKey: number | null
+  selectedKey: number | null
+  onPick: (key: number) => void
   suffix: (bucket: DemoBucket) => string
 }) {
   return (
@@ -68,13 +105,22 @@ function BucketGrid({
       <h3 className="mb-2 text-sm font-semibold">{title}</h3>
       <div className="grid grid-cols-4 gap-2 md:grid-cols-7 xl:grid-cols-12">
         {buckets.map((bucket) => {
-          const best = bucket.key === bestKey && bucket.count > 0
+          const selected = bucket.key === selectedKey
+          const best = bucket.key === bestKey && bucket.count > 0 && !selected
           return (
-            <div
+            <button
               key={bucket.key}
-              className={`rounded-lg border px-2 py-2 ${
-                best ? 'border-primary bg-primary/10' : 'border-border bg-card'
-              }`}
+              type="button"
+              disabled={bucket.count === 0}
+              aria-pressed={selected}
+              onClick={() => onPick(bucket.key)}
+              className={`rounded-lg border px-2 py-2 text-left ${
+                selected
+                  ? 'border-primary bg-primary/10'
+                  : best
+                    ? 'border-primary/40 bg-card'
+                    : 'border-border bg-card'
+              } ${bucket.count ? 'cursor-pointer' : 'cursor-default opacity-60'}`}
             >
               <div className="text-[11px] text-muted-foreground">{suffix(bucket)}</div>
               <div className={`mt-1 font-mono text-sm ${tone(bucket.count ? bucket.net_pnl : null)}`}>
@@ -83,11 +129,75 @@ function BucketGrid({
               <div className="mt-0.5 text-[11px] text-muted-foreground">
                 {bucket.count ? `${bucket.wins} из ${bucket.count}` : 'нет сделок'}
               </div>
-            </div>
+            </button>
           )
         })}
       </div>
     </div>
+  )
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <label className="grid gap-1 text-xs text-muted-foreground">
+      {label}
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger size="sm" className="w-40 cursor-pointer bg-card">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
+  )
+}
+
+function SortHead({
+  label,
+  field,
+  sort,
+  order,
+  align = 'left',
+  className = '',
+  onSort,
+}: {
+  label: string
+  field: SortField
+  sort: SortField
+  order: SortOrder
+  align?: 'left' | 'right'
+  className?: string
+  onSort: (field: SortField) => void
+}) {
+  const active = sort === field
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        className={`inline-flex cursor-pointer items-center gap-1 hover:text-foreground ${
+          align === 'right' ? 'w-full justify-end' : ''
+        }`}
+        onClick={() => onSort(field)}
+      >
+        {label}
+        <span className="w-3 font-mono text-[10px]">{active ? (order === 'asc' ? '↑' : '↓') : ''}</span>
+      </button>
+    </TableHead>
   )
 }
 
@@ -120,6 +230,109 @@ export default function DemoTrades({
   readOnly?: boolean
   onChanged?: () => void
 }) {
+  const [symbol, setSymbol] = useState('')
+  const [symbolQuery, setSymbolQuery] = useState('')
+  const [side, setSide] = useState('all')
+  const [status, setStatus] = useState('all')
+  const [reverse, setReverse] = useState('all')
+  const [style, setStyle] = useState('all')
+  const [result, setResult] = useState('all')
+  const [weekday, setWeekday] = useState<number | null>(null)
+  const [hour, setHour] = useState<number | null>(null)
+  const [sort, setSort] = useState<SortField>('opened_at')
+  const [order, setOrder] = useState<SortOrder>('desc')
+  const [page, setPage] = useState(1)
+  const [rows, setRows] = useState<DemoTrade[]>([])
+  const [total, setTotal] = useState(0)
+  const [pages, setPages] = useState(0)
+  const [pageError, setPageError] = useState<string | null>(null)
+  const request = useRef(0)
+
+  useEffect(() => {
+    const next = symbol.trim()
+    const timer = setTimeout(() => setSymbolQuery(next), 300)
+    return () => clearTimeout(timer)
+  }, [symbol])
+
+  const filterKey = [
+    symbolQuery, side, status, reverse, style, result,
+    weekday ?? '', hour ?? '', sort, order,
+  ].join('|')
+  const [appliedFilter, setAppliedFilter] = useState(filterKey)
+  if (appliedFilter !== filterKey) {
+    setAppliedFilter(filterKey)
+    if (page !== 1) setPage(1)
+  }
+
+  useEffect(() => {
+    let stop = false
+    const load = async () => {
+      const ticket = ++request.current
+      try {
+        const data = await api.demoTradePage({
+          page,
+          symbol: symbolQuery,
+          side: side === 'all' ? '' : side,
+          status: status === 'all' ? '' : status,
+          reverse: reverse === 'all' ? '' : reverse,
+          style: style === 'all' ? '' : style,
+          result: result === 'all' ? '' : result,
+          weekday,
+          hour,
+          sort,
+          order,
+        })
+        if (stop || ticket !== request.current) return
+        setRows(data.trades)
+        setTotal(data.total)
+        setPages(data.pages)
+        setPageError(null)
+        if (data.pages > 0 && data.page !== page) setPage(data.page)
+      } catch (error) {
+        if (stop || ticket !== request.current) return
+        setPageError(error instanceof Error ? error.message : 'Не удалось загрузить страницу')
+      }
+    }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => {
+      stop = true
+      clearInterval(timer)
+    }
+  }, [page, symbolQuery, side, status, reverse, style, result, weekday, hour, sort, order])
+
+  const pickSort = (field: SortField) => {
+    if (sort === field) setOrder((current) => (current === 'desc' ? 'asc' : 'desc'))
+    else {
+      setSort(field)
+      setOrder(field === 'symbol' || field === 'weekday' ? 'asc' : 'desc')
+    }
+  }
+
+  const pickWeekday = (key: number) => setWeekday((current) => (current === key ? null : key))
+  const pickHour = (key: number) => setHour((current) => (current === key ? null : key))
+
+  const narrowed = Boolean(
+    symbolQuery || side !== 'all' || status !== 'all' || reverse !== 'all'
+    || style !== 'all' || result !== 'all' || weekday != null || hour != null,
+  )
+  const filtered = narrowed || sort !== 'opened_at' || order !== 'desc'
+
+  const reset = () => {
+    setSymbol('')
+    setSymbolQuery('')
+    setSide('all')
+    setStatus('all')
+    setReverse('all')
+    setStyle('all')
+    setResult('all')
+    setWeekday(null)
+    setHour(null)
+    setSort('opened_at')
+    setOrder('desc')
+    setPage(1)
+  }
+
   if (!report) {
     return (
       <section className="rounded-xl border border-dashed border-border py-14 text-center text-muted-foreground">
@@ -128,10 +341,10 @@ export default function DemoTrades({
     )
   }
 
-  const closedTrades = report.trades.filter((trade) => trade.status === 'closed')
   const openTrades = report.trades.filter((trade) => trade.status === 'open')
   const bestHour = report.best_hour && report.best_hour.count > 0 ? report.best_hour : null
   const bestDay = report.best_weekday && report.best_weekday.count > 0 ? report.best_weekday : null
+  const current = pages === 0 ? 1 : Math.min(page, pages)
 
   return (
     <section className="space-y-6">
@@ -140,6 +353,7 @@ export default function DemoTrades({
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Время — минское, по моменту открытия на бирже. В плюс и минус попадают только
           закрытые сделки, и только на суммы из проводок счёта: результат, комиссия и фандинг.
+          Сводка сверху — по всем закрытым. Таблица ниже запрашивает одну страницу и слушает фильтры.
         </p>
       </div>
 
@@ -224,7 +438,7 @@ export default function DemoTrades({
         )}
       </div>
 
-      {closedTrades.length > 0 ? (
+      {report.closed > 0 ? (
         <p className="text-sm">
           {bestDay ? (
             <>
@@ -249,42 +463,146 @@ export default function DemoTrades({
       )}
 
       <BucketGrid
-        title="День недели, итог в USDT"
+        title="День недели, итог в USDT. Нажатие фильтрует таблицу"
         buckets={report.weekdays}
         bestKey={bestDay?.key ?? null}
+        selectedKey={weekday}
+        onPick={pickWeekday}
         suffix={(bucket) => bucket.label}
       />
       <BucketGrid
-        title="Час открытия, Минск"
+        title="Час открытия, Минск. Нажатие фильтрует таблицу"
         buckets={report.hours}
         bestKey={bestHour?.key ?? null}
+        selectedKey={hour}
+        onPick={pickHour}
         suffix={(bucket) => `${bucket.label}:00`}
       />
+
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          Пара
+          <Input
+            value={symbol}
+            onChange={(event) => setSymbol(event.target.value)}
+            placeholder="PEPE, BTC"
+            className="h-8 w-40 bg-card"
+          />
+        </label>
+        <FilterSelect
+          label="Сторона"
+          value={side}
+          onChange={setSide}
+          options={[
+            { value: 'all', label: 'Все' },
+            { value: 'LONG', label: 'LONG' },
+            { value: 'SHORT', label: 'SHORT' },
+          ]}
+        />
+        <FilterSelect
+          label="Реверс"
+          value={reverse}
+          onChange={setReverse}
+          options={[
+            { value: 'all', label: 'Все' },
+            { value: 'yes', label: 'Только реверс' },
+            { value: 'no', label: 'Без реверса' },
+          ]}
+        />
+        <FilterSelect
+          label="Статус"
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: 'all', label: 'Все' },
+            { value: 'open', label: 'Открыта' },
+            { value: 'closed', label: 'Закрыта' },
+            { value: 'skipped', label: 'Не открыта' },
+            { value: 'error', label: 'Ошибка' },
+          ]}
+        />
+        <FilterSelect
+          label="Стиль"
+          value={style}
+          onChange={setStyle}
+          options={[
+            { value: 'all', label: 'Все' },
+            { value: 'conservative', label: 'Консервативный' },
+            { value: 'aggressive', label: 'Агрессивный' },
+          ]}
+        />
+        <FilterSelect
+          label="Итог"
+          value={result}
+          onChange={setResult}
+          options={[
+            { value: 'all', label: 'Все' },
+            { value: 'plus', label: 'Плюс' },
+            { value: 'minus', label: 'Минус' },
+            { value: 'flat', label: 'Ноль' },
+          ]}
+        />
+        <FilterSelect
+          label="День"
+          value={weekday == null ? 'all' : String(weekday)}
+          onChange={(value) => setWeekday(value === 'all' ? null : Number(value))}
+          options={[
+            { value: 'all', label: 'Все' },
+            ...WEEKDAYS.map((label, index) => ({ value: String(index), label })),
+          ]}
+        />
+        <FilterSelect
+          label="Час, Минск"
+          value={hour == null ? 'all' : String(hour)}
+          onChange={(value) => setHour(value === 'all' ? null : Number(value))}
+          options={[
+            { value: 'all', label: 'Все' },
+            ...Array.from({ length: 24 }, (_, index) => ({
+              value: String(index),
+              label: `${String(index).padStart(2, '0')}:00`,
+            })),
+          ]}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="cursor-pointer"
+          disabled={!filtered}
+          onClick={reset}
+        >
+          Сбросить
+        </Button>
+      </div>
+
+      {pageError ? (
+        <p className="text-sm text-destructive">{pageError}</p>
+      ) : null}
 
       <div className="overflow-hidden rounded-xl border border-border">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead>Открытие, Минск</TableHead>
-              <TableHead>День</TableHead>
-              <TableHead>Пара</TableHead>
-              <TableHead className="text-right">Результат</TableHead>
-              <TableHead className="text-right">Комиссия</TableHead>
-              <TableHead className="hidden text-right md:table-cell">Фандинг</TableHead>
-              <TableHead className="text-right">Итог</TableHead>
+              <SortHead label="Открытие, Минск" field="opened_at" sort={sort} order={order} onSort={pickSort} />
+              <SortHead label="День" field="weekday" sort={sort} order={order} onSort={pickSort} />
+              <SortHead label="Пара" field="symbol" sort={sort} order={order} onSort={pickSort} />
+              <SortHead label="Результат" field="gross_pnl" sort={sort} order={order} align="right" className="text-right" onSort={pickSort} />
+              <SortHead label="Комиссия" field="commission" sort={sort} order={order} align="right" className="text-right" onSort={pickSort} />
+              <SortHead label="Фандинг" field="funding" sort={sort} order={order} align="right" className="hidden text-right md:table-cell" onSort={pickSort} />
+              <SortHead label="Итог" field="net_pnl" sort={sort} order={order} align="right" className="text-right" onSort={pickSort} />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {report.trades.length === 0 ? (
+            {rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                  Сделок пока нет.
+                  {pageError ? 'Страница не загрузилась.' : narrowed ? 'По этому фильтру сделок нет.' : 'Сделок пока нет.'}
                 </TableCell>
               </TableRow>
             ) : (
-              report.trades.map((trade) => {
+              rows.map((trade) => {
                 const when = msk(trade.opened_at ?? trade.created_at)
-                const result = resultText(trade)
+                const rowResult = resultText(trade)
                 const note = trade.warning || trade.error || trade.skip_reason || trade.settle_note
                 return (
                   <TableRow key={trade.id} className="font-mono text-sm">
@@ -319,7 +637,7 @@ export default function DemoTrades({
                     <TableCell className={`hidden text-right md:table-cell ${tone(trade.funding)}`}>
                       {trade.status === 'closed' ? money(trade.funding) : '—'}
                     </TableCell>
-                    <TableCell className={`text-right ${result.className}`}>{result.text}</TableCell>
+                    <TableCell className={`text-right ${rowResult.className}`}>{rowResult.text}</TableCell>
                   </TableRow>
                 )
               })
@@ -327,6 +645,51 @@ export default function DemoTrades({
           </TableBody>
         </Table>
       </div>
+
+      {total > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, total)} из {total}
+          </p>
+          <nav aria-label="Страницы демо-сделок" className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer"
+              disabled={current <= 1}
+              onClick={() => setPage(current - 1)}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Назад
+            </Button>
+            {pageWindow(current, pages).map((item, index) =>
+              item === 'gap' ? (
+                <span key={`gap-${index}`} className="px-1 text-muted-foreground">…</span>
+              ) : (
+                <Button
+                  key={item}
+                  variant={item === current ? 'default' : 'outline'}
+                  size="sm"
+                  className="min-w-9 cursor-pointer"
+                  onClick={() => setPage(item)}
+                >
+                  {item}
+                </Button>
+              ),
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer"
+              disabled={pages === 0 || current >= pages}
+              onClick={() => setPage(current + 1)}
+            >
+              Дальше
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </nav>
+        </div>
+      ) : null}
     </section>
   )
 }

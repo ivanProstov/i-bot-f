@@ -83,6 +83,7 @@ export default function Signals({
   }
 
   const tradeFor = (signal: Signal) =>
+    signal.demo_trade ??
     demoTrades.find((trade) => trade.signal_id === signal.id && trade.status === 'open') ??
     demoTrades.find((trade) => trade.signal_id === signal.id && trade.status === 'closed') ??
     null

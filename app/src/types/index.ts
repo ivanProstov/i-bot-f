@@ -29,6 +29,7 @@ export interface Signal {
   closed_at: number | null
   result_pct: number | null
   check?: SignalCheck | null
+  demo_trade?: DemoTrade | null
 }
 
 export interface SignalHistory {
@@ -119,6 +120,14 @@ export interface DemoTrade {
   exit_target?: number | null
   closing?: boolean | null
   profit_close_usdt?: number | null
+}
+
+export interface DemoTradePage {
+  trades: DemoTrade[]
+  page: number
+  page_size: number
+  total: number
+  pages: number
 }
 
 export interface DemoReport {

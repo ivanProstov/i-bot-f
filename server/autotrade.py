@@ -105,6 +105,135 @@ def _bucket(rows: list[dict], key: int, label: str) -> dict:
     }
 
 
+def _public_trade(row: dict) -> dict:
+    """Отдаёт сделку без проводок биржи: в таблице они не нужны и раздувают ответ."""
+    return {key: value for key, value in row.items() if key != "income"}
+
+
+def _opened_ts(row: dict) -> float | None:
+    stamp = row.get("opened_at") or row.get("created_at")
+    return float(stamp) if stamp else None
+
+
+def _sort_value(row: dict, field: str):
+    if field == "opened_at":
+        return _opened_ts(row)
+    if field == "weekday":
+        stamp = _opened_ts(row)
+        return _minsk(stamp).weekday() if stamp else None
+    if field == "symbol":
+        text = str(row.get("symbol") or "").upper()
+        return text or None
+    if field == "gross_pnl":
+        return row.get("gross_pnl") if row.get("status") == "closed" else None
+    if field == "commission":
+        if row.get("status") == "closed" and row.get("commission") is not None:
+            return -float(row["commission"])
+        if row.get("open_commission"):
+            return -float(row["open_commission"])
+        return None
+    if field == "funding":
+        return row.get("funding") if row.get("status") == "closed" else None
+    if field == "net_pnl":
+        if row.get("status") == "closed":
+            return row.get("net_pnl")
+        if row.get("status") == "open":
+            return row.get("unrealized_pnl")
+        return None
+    return None
+
+
+def slice_trades(
+    trades: list[dict],
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    symbol: str = "",
+    side: str = "",
+    status: str = "",
+    reverse: str = "",
+    style: str = "",
+    result: str = "",
+    weekday: int | None = None,
+    hour: int | None = None,
+    sort: str = "opened_at",
+    order: str = "desc",
+) -> dict:
+    """Одна страница таблицы. Сводка по всем сделкам сюда не входит."""
+    if side not in ("", "LONG", "SHORT"):
+        raise ValueError("Сторона: LONG, SHORT или пусто")
+    if status not in ("", "open", "closed", "skipped", "error"):
+        raise ValueError("Статус: open, closed, skipped, error или пусто")
+    if reverse not in ("", "yes", "no"):
+        raise ValueError("Реверс: yes, no или пусто")
+    if style not in ("", "conservative", "aggressive"):
+        raise ValueError("Стиль: conservative, aggressive или пусто")
+    if result not in ("", "plus", "minus", "flat"):
+        raise ValueError("Итог: plus, minus, flat или пусто")
+    if sort not in ("opened_at", "weekday", "symbol", "gross_pnl", "commission", "funding", "net_pnl"):
+        raise ValueError("Неизвестная сортировка")
+    if order not in ("asc", "desc"):
+        raise ValueError("Порядок: asc или desc")
+    if weekday is not None and weekday not in range(7):
+        raise ValueError("День недели — от 0 (понедельник) до 6")
+    if hour is not None and hour not in range(24):
+        raise ValueError("Час — от 0 до 23")
+    size = max(1, min(50, int(page_size)))
+    needle = "".join(ch for ch in symbol.upper() if ch.isalnum())
+
+    matched = []
+    for row in trades:
+        if needle and needle not in str(row.get("symbol") or ""):
+            continue
+        if side and row.get("side") != side:
+            continue
+        if status and row.get("status") != status:
+            continue
+        if reverse == "yes" and not row.get("reversed"):
+            continue
+        if reverse == "no" and row.get("reversed"):
+            continue
+        if style and row.get("style") != style:
+            continue
+        if result:
+            net = row.get("net_pnl")
+            if row.get("status") != "closed" or net is None:
+                continue
+            if result == "plus" and not net > 0:
+                continue
+            if result == "minus" and not net < 0:
+                continue
+            if result == "flat" and net != 0:
+                continue
+        if weekday is not None or hour is not None:
+            stamp = _opened_ts(row)
+            if stamp is None:
+                continue
+            local = _minsk(stamp)
+            if weekday is not None and local.weekday() != weekday:
+                continue
+            if hour is not None and local.hour != hour:
+                continue
+        matched.append(row)
+
+    present = [row for row in matched if _sort_value(row, sort) is not None]
+    missing = [row for row in matched if _sort_value(row, sort) is None]
+    present.sort(key=lambda row: _sort_value(row, sort), reverse=order == "desc")
+    ordered = present + missing
+    total = len(ordered)
+    pages = (total + size - 1) // size if total else 0
+    current = min(max(int(page), 1), pages) if pages else 1
+    start = (current - 1) * size if pages else 0
+    chunk = ordered[start:start + size] if pages else []
+    return {
+        "trades": [_public_trade(row) for row in chunk],
+        "page": current if pages else 1,
+        "page_size": size,
+        "total": total,
+        "pages": pages,
+    }
+
+
 def summarize(trades: list[dict]) -> dict:
     closed = [
         row for row in trades
@@ -701,11 +830,32 @@ class AutoBook:
             "settle_note": note,
         })
 
+    def trade_for_signal(self, signal_id: str) -> dict | None:
+        """Открытая сделка сигнала, иначе последняя закрытая. Вся книга наружу не уходит."""
+        closed = None
+        fallback = None
+        for row in self.trades:
+            if row.get("signal_id") != signal_id:
+                continue
+            if row.get("status") == "open":
+                return _public_trade(row)
+            if row.get("status") == "closed" and closed is None:
+                closed = row
+            elif fallback is None:
+                fallback = row
+        chosen = closed or fallback
+        return _public_trade(chosen) if chosen else None
+
     def report(self) -> dict:
         payload = summarize(self.trades)
         payload["error"] = self.error
-        payload["trades"] = self.trades
+        payload["trades"] = [
+            _public_trade(row) for row in self.trades if row.get("status") == "open"
+        ]
         return payload
+
+    def page(self, **kwargs) -> dict:
+        return slice_trades(self.trades, **kwargs)
 
 
 book = AutoBook()
