@@ -74,6 +74,7 @@ export interface Settings {
   pair_rest_hours: number
   auto_profit_close_pct: number
   auto_tp_path_pct: number
+  auto_reverse: boolean
 }
 
 export interface DemoBucket {
@@ -91,6 +92,7 @@ export interface DemoTrade {
   signal_id: string
   symbol: string
   side: 'LONG' | 'SHORT'
+  reversed?: boolean
   style: string | null
   leverage: number
   wallet_pct: number

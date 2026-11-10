@@ -165,7 +165,9 @@ export default function SignalCard({
 
       {demoTrade?.status === 'open' ? (
         <div className="mt-3 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2 text-xs">
-          <div className="font-semibold text-foreground">Сканер открыл эту сделку на демо</div>
+          <div className="font-semibold text-foreground">
+            Сканер открыл эту сделку на демо{demoTrade.reversed ? ' реверсом' : ''}
+          </div>
           <div className="mt-1 text-muted-foreground">
             {demoTrade.unrealized_pnl == null
               ? 'Жду плавающий результат с биржи.'
@@ -186,7 +188,7 @@ export default function SignalCard({
       ) : demoTrade?.status === 'closed' ? (
         <div className="mt-3 rounded-lg border border-border bg-secondary/60 px-3 py-2 text-xs">
           <div className="font-semibold text-foreground">
-            Сканер закрыл демо-сделку
+            Сканер закрыл демо-сделку{demoTrade.reversed ? ' · реверс' : ''}
             {demoTrade.net_pnl == null ? '' : `: ${demoMoney(demoTrade.net_pnl)} USDT`}
           </div>
           <div className="mt-1 text-muted-foreground">

@@ -44,8 +44,33 @@ def exit_target(margin: Decimal, commission: Decimal) -> Decimal:
     return margin * Decimal("0.01") + commission
 
 
+def order_plan(signal: dict, settings: dict) -> dict:
+    """Сторона и уровни автосделки. В реверсе вход противоположный, тейк и стоп меняются местами."""
+    entry = float(signal["entry"])
+    signal_tp = float(signal["tp"])
+    signal_sl = float(signal["sl"])
+    path = settings.get("auto_tp_path_pct")
+    path = 50.0 if path is None else float(path)
+    reverse = bool(settings.get("auto_reverse"))
+    if reverse:
+        side = "SHORT" if signal.get("side") == "LONG" else "LONG"
+        full_take = signal_sl
+        trade_sl = signal_tp
+    else:
+        side = signal["side"]
+        full_take = signal_tp
+        trade_sl = signal_sl
+    return {
+        "side": side,
+        "trade_tp": take_on_path(entry, full_take, path),
+        "trade_sl": trade_sl,
+        "full_take": full_take,
+        "reverse": reverse,
+    }
+
+
 def take_on_path(entry: float, tp: float, path_pct: float) -> float:
-    """Цена тейка автосделки: доля пути от входа сигнала до его тейка."""
+    """Цена тейка автосделки: доля пути от входа до цели тейка."""
     path = 100.0 if path_pct is None else float(path_pct)
     if path >= 100 or entry <= 0 or tp <= 0:
         return tp
@@ -505,42 +530,48 @@ class AutoBook:
                     "На демо-счёте по этой паре уже есть позиция, бот её не трогает",
                 )
                 continue
-            path = settings.get("auto_tp_path_pct")
-            path = 50.0 if path is None else float(path)
-            trade_tp = take_on_path(float(signal["entry"]), float(signal["tp"]), path)
+            plan = order_plan(signal, settings)
+            side = plan["side"]
+            trade_tp = plan["trade_tp"]
+            trade_sl = plan["trade_sl"]
             try:
                 result = await open_position(
-                    "demo", signal["symbol"], signal["side"],
-                    float(notional), leverage, trade_tp, float(signal["sl"]),
+                    "demo", signal["symbol"], side,
+                    float(notional), leverage, trade_tp, trade_sl,
                 )
             except TradeError as exc:
-                if trade_tp != float(signal["tp"]) and "тейк" in str(exc).lower():
-                    trade_tp = float(signal["tp"])
+                if trade_tp != plan["full_take"] and "тейк" in str(exc).lower():
+                    trade_tp = plan["full_take"]
                     try:
                         result = await open_position(
-                            "demo", signal["symbol"], signal["side"],
-                            float(notional), leverage, trade_tp, float(signal["sl"]),
+                            "demo", signal["symbol"], side,
+                            float(notional), leverage, trade_tp, trade_sl,
                         )
                     except TradeError as again:
-                        self._remember_skip(signal, leverage, pct, str(again), status="error")
+                        self._remember_skip(signal, leverage, pct, str(again), status="error", side=side)
                         continue
                 else:
-                    self._remember_skip(signal, leverage, pct, str(exc), status="error")
+                    self._remember_skip(signal, leverage, pct, str(exc), status="error", side=side)
                     continue
             except Exception as exc:
                 self.error = f"Не открыл демо-сделку: {exc}"
                 return
-            await self._remember_open(signal, result, leverage, pct, notional, settings, trade_tp)
+            await self._remember_open(
+                signal, result, leverage, pct, notional, settings, trade_tp, trade_sl, side, plan["reverse"],
+            )
             opened += 1
         if opened:
             self.error = None
 
-    def _remember_skip(self, signal: dict, leverage: int, pct: Decimal, reason: str, status: str = "skipped"):
+    def _remember_skip(
+        self, signal: dict, leverage: int, pct: Decimal, reason: str,
+        status: str = "skipped", side: str | None = None,
+    ):
         self._add({
             "id": uuid.uuid4().hex[:10],
             "signal_id": signal["id"],
             "symbol": signal["symbol"],
-            "side": signal["side"],
+            "side": side or signal["side"],
             "style": signal.get("style"),
             "leverage": leverage,
             "wallet_pct": float(pct),
@@ -566,7 +597,7 @@ class AutoBook:
 
     async def _remember_open(
         self, signal: dict, result: dict, leverage: int, pct: Decimal, notional: Decimal,
-        settings: dict, trade_tp: float,
+        settings: dict, trade_tp: float, trade_sl: float, side: str, reverse: bool,
     ):
         order_id = result.get("order_id")
         fills = []
@@ -596,20 +627,38 @@ class AutoBook:
         now_ms = int(time.time() * 1000)
         opened_ms = opened_ms or now_ms
         margin = (notional / leverage) if leverage else Decimal(0)
-        tp_pct = float(signal.get("tp_pct") or 0)
+        entry = float(signal.get("entry") or 0)
+        signal_tp = float(signal.get("tp") or 0)
+        signal_sl = float(signal.get("sl") or 0)
+        if reverse and entry:
+            take_pct = abs(signal_sl - entry) / entry * 100
+        else:
+            take_pct = float(signal.get("tp_pct") or 0)
         share = settings.get("auto_profit_close_pct")
         share = 30.0 if share is None else float(share)
-        goal = stake_profit_close(tp_pct, margin, share)
+        goal = stake_profit_close(take_pct, margin, share)
         notes = []
-        signal_tp = float(signal.get("tp") or 0)
-        entry = float(signal.get("entry") or 0)
-        if signal_tp and entry and abs(trade_tp - signal_tp) / signal_tp > 0.0000001:
+        if reverse:
+            notes.append(
+                f"Реверс: сигнал {signal.get('side')}, открыт {side}. "
+                f"Стоп {_price(trade_sl)} стоит на тейке сигнала. "
+                f"Тейк {_price(trade_tp)} идёт к стопу сигнала {_price(signal_sl)}."
+            )
+        if signal_tp and entry and not reverse and abs(trade_tp - signal_tp) / signal_tp > 0.0000001:
             move = abs(trade_tp - entry) / entry * 100
             span = abs(signal_tp - entry)
             path_used = abs(trade_tp - entry) / span * 100 if span else 100
             notes.append(
                 f"Тейк на бирже стоит на {path_used:.0f}% пути сигнала: {_price(trade_tp)} вместо {_price(signal_tp)}. "
                 f"Это {move:.2f}% цены. Стоп сигнала остаётся."
+            )
+        elif reverse and signal_sl and entry and abs(trade_tp - signal_sl) / signal_sl > 0.0000001:
+            move = abs(trade_tp - entry) / entry * 100
+            span = abs(signal_sl - entry)
+            path_used = abs(trade_tp - entry) / span * 100 if span else 100
+            notes.append(
+                f"Это {path_used:.0f}% пути до стопа сигнала, {_price(trade_tp)} вместо {_price(signal_sl)}. "
+                f"Ход цены {move:.2f}%."
             )
         if goal is not None:
             notes.append(
@@ -620,7 +669,8 @@ class AutoBook:
             "id": uuid.uuid4().hex[:10],
             "signal_id": signal["id"],
             "symbol": signal["symbol"],
-            "side": signal["side"],
+            "side": side,
+            "reversed": reverse,
             "style": signal.get("style"),
             "leverage": leverage,
             "wallet_pct": float(pct),

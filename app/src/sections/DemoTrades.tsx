@@ -91,6 +91,15 @@ function BucketGrid({
   )
 }
 
+function ReverseMark({ trade }: { trade: DemoTrade }) {
+  if (!trade.reversed) return null
+  return (
+    <span className="ml-2 rounded-md border border-primary/40 bg-background px-1.5 py-0.5 align-middle font-sans text-[10px] font-semibold uppercase tracking-wide text-primary">
+      Реверс
+    </span>
+  )
+}
+
 function resultText(trade: DemoTrade): { text: string; className: string } {
   if (trade.status === 'closed') return { text: money(trade.net_pnl), className: tone(trade.net_pnl) }
   if (trade.status === 'open') {
@@ -179,10 +188,11 @@ export default function DemoTrades({
                       <span className={trade.side === 'LONG' ? 'text-[hsl(var(--long))]' : 'text-[hsl(var(--short))]'}>
                         {trade.side}
                       </span>
+                      <ReverseMark trade={trade} />
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      Открыта сканером
-                      {trade.margin_usdt != null ? `, ставка ${money(trade.margin_usdt)} USDT` : ''}
+                      Сканер открыл эту сделку на демо{trade.reversed ? ' реверсом' : ''}
+                      {trade.margin_usdt != null ? `. Ставка ${money(trade.margin_usdt)} USDT` : ''}
                       {trade.leverage ? `, плечо ${trade.leverage}x` : ''}
                     </div>
                   </div>
@@ -286,9 +296,11 @@ export default function DemoTrades({
                         <span className={trade.side === 'LONG' ? 'text-[hsl(var(--long))]' : 'text-[hsl(var(--short))]'}>
                           {trade.side}
                         </span>
+                        <ReverseMark trade={trade} />
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {STATUS_LABEL[trade.status]}
+                        {trade.reversed ? ' · реверс' : ''}
                         {trade.entry_price ? ` · вход ${trade.entry_price}` : ''}
                         {trade.leverage ? ` · ${trade.leverage}x` : ''}
                       </div>

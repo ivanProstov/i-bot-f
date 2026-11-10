@@ -44,6 +44,7 @@ function withAuto(settings: Settings): Settings {
     pair_rest_hours: settings.pair_rest_hours ?? 2,
     auto_profit_close_pct: settings.auto_profit_close_pct ?? 30,
     auto_tp_path_pct: settings.auto_tp_path_pct ?? 50,
+    auto_reverse: settings.auto_reverse ?? false,
   }
 }
 
@@ -107,6 +108,21 @@ export default function SettingsPanel({
               onCheckedChange={(checked) => setDraft({ ...draft, auto_trade: checked })}
               className="mt-1 cursor-pointer"
               aria-label="Автоторговля на демо"
+            />
+          </div>
+          <div className="mt-5 flex items-start justify-between gap-4 border-t border-border pt-4">
+            <div>
+              <h3 className="font-semibold">Реверс</h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Противоположный вход. Сигнал SHORT открывается лонгом, сигнал LONG — шортом.
+                Тейк сигнала становится стопом, стоп сигнала становится тейком.
+              </p>
+            </div>
+            <Switch
+              checked={draft.auto_reverse}
+              onCheckedChange={(checked) => setDraft({ ...draft, auto_reverse: checked })}
+              className="mt-1 cursor-pointer"
+              aria-label="Реверс"
             />
           </div>
           <div className="mt-5 grid gap-6 md:grid-cols-2">
@@ -203,10 +219,11 @@ export default function SettingsPanel({
             Маржа — это {draft.auto_wallet_pct}% свободного USDT. Объём позиции = маржа ×{' '}
             {draft.auto_leverage}. Сканер открывает сигнал, когда его уверенность от{' '}
             {draft.auto_min_confidence}% и выше. Тейк на бирже ставится на {draft.auto_tp_path_pct}%
-            пути от входа до тейка сигнала: 50 — вдвое ближе, 100 — как на карточке. Стоп не
-            сдвигается. После закрытия сделки эта пара отдыхает {draft.pair_rest_hours} ч: новый
-            сигнал по ней в автоторговлю не берётся. Ноль часов отключает отдых. Если тейк сигнала
-            больше 10% цены, сделка закрывается при плюсе{' '}
+            пути от входа до тейка: 50 — вдвое ближе, 100 — на всю цель. Стоп не сдвигается. В
+            реверсе цель тейка — бывший стоп сигнала, а стоп стоит на бывшем тейке. После закрытия
+            сделки эта пара отдыхает {draft.pair_rest_hours} ч: новый
+            сигнал по ней в автоторговлю не берётся. Ноль часов отключает отдых. Если ход до тейка
+            сделки больше 10% цены, она закрывается при плюсе{' '}
             {draft.auto_profit_close_pct}% ставки, не объёма с плечом. Ноль процентов это правило
             выключает. Итог берётся из проводок биржи. Когда срок жизни сигнала выходит, плюс на
             бирже закрывается сразу. Если в этот момент минус, сделка ждёт, пока плюс не станет
