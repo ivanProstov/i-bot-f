@@ -1,5 +1,5 @@
 {
-  "style": "mixed",
+  "style": "conservative",
   "top_n": 25,
   "scan_interval": 60,
   "timeframe": "15m",
@@ -21,5 +21,7 @@
   "auto_min_confidence": 100,
   "pair_rest_hours": 2.0,
   "auto_profit_close_pct": 15.0,
-  "auto_tp_path_pct": 50.0
+  "auto_tp_path_pct": 100.0,
+  "auto_reverse": false,
+  "max_sl_pct": 3
 }

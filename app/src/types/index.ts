@@ -76,6 +76,7 @@ export interface Settings {
   auto_profit_close_pct: number
   auto_tp_path_pct: number
   auto_reverse: boolean
+  max_sl_pct: number
 }
 
 export interface DemoBucket {

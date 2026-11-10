@@ -69,6 +69,8 @@ DEFAULT_SETTINGS = {
     "auto_tp_path_pct": 50,
     # противоположный вход: тейк сигнала становится стопом, стоп — тейком
     "auto_reverse": False,
+    # сигнал не создаётся, если стоп шире этого процента цены
+    "max_sl_pct": 3,
 }
 
 
@@ -158,6 +160,23 @@ def sma(values, period):
 TF_SECONDS = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400}
 
 
+def hourly_trend(candles: list[dict]) -> str | None:
+    """Старший тренд по закрытым часовым свечам: up, down или None.
+
+    Лонг на 15 минутах берётся только при up, шорт — только при down.
+    Так откат к EMA20 не открывается против часового движения.
+    """
+    now = time.time()
+    closed = [c for c in candles if c.get("open_time", 0) / 1000 + 3600 <= now]
+    closes = [c["close"] for c in closed]
+    if len(closes) < 50:
+        return None
+    e20, e50 = ema(closes, 20), ema(closes, 50)
+    if e20[-1] is None or e50[-1] is None or e20[-1] == e50[-1]:
+        return None
+    return "up" if e20[-1] > e50[-1] else "down"
+
+
 def closed_only(candles: list[dict]) -> list[dict]:
     """Убирает текущую, ещё не закрытую свечу.
 
@@ -170,7 +189,7 @@ def closed_only(candles: list[dict]) -> list[dict]:
     return [c for c in candles if c.get("open_time", 0) / 1000 + step <= now]
 
 
-def evaluate(symbol: str, candles: list[dict], style: str) -> dict | None:
+def evaluate(symbol: str, candles: list[dict], style: str, hourly: str | None) -> dict | None:
     """
     Анализирует свечи одной пары и возвращает сигнал (или None).
     style: conservative | aggressive
@@ -239,19 +258,26 @@ def evaluate(symbol: str, candles: list[dict], style: str) -> dict | None:
     side = "LONG" if long_ok else ("SHORT" if short_ok else None)
     if side is None:
         return None
+    if side == "LONG" and hourly != "up":
+        return None
+    if side == "SHORT" and hourly != "down":
+        return None
 
     tp_mult, sl_mult = cfg["tp_atr"], cfg["sl_atr"]
     if side == "LONG":
         tp, sl = price + tp_mult * atr_v, price - sl_mult * atr_v
-        checks = long_checks
+        checks = long_checks + ["часовой тренд вверх (EMA20 > EMA50)"]
     else:
         tp, sl = price - tp_mult * atr_v, price + sl_mult * atr_v
-        checks = short_checks
+        checks = short_checks + ["часовой тренд вниз (EMA20 < EMA50)"]
 
     risk = abs(price - sl)
     reward = abs(tp - price)
     rr = reward / risk if risk > 0 else 0
     if rr < cfg["min_rr"]:
+        return None
+    sl_pct = risk / price * 100
+    if sl_pct > float(SETTINGS.get("max_sl_pct") or 3):
         return None
 
     confidence = min(100, int(40 + 12 * len(checks) + 10 * min(vol_ratio, 3)))
@@ -266,7 +292,7 @@ def evaluate(symbol: str, candles: list[dict], style: str) -> dict | None:
         "tp": round(tp, 8),
         "sl": round(sl, 8),
         "tp_pct": round(reward / price * 100, 2),
-        "sl_pct": round(risk / price * 100, 2),
+        "sl_pct": round(sl_pct, 2),
         "rr": round(rr, 2),
         "atr_pct": round(atr_pct, 2),
         "rsi": round(r[-1], 1),
@@ -362,17 +388,22 @@ class Scanner:
             and s.get("status") == "TRADING"
         }
 
-    async def klines(self, symbol: str) -> list[dict]:
-        params = {"symbol": symbol, "interval": SETTINGS["timeframe"], "limit": 160}
+    async def _klines(self, client, symbol: str, interval: str, limit: int) -> list[dict]:
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
         async with self._klines_sem:
-            r = await self._client.get("/fapi/v1/klines", params=params)
+            r = await client.get("/fapi/v1/klines", params=params)
             if r.status_code == 429:
                 await asyncio.sleep(float(r.headers.get("Retry-After", "1")))
-                r = await self._client.get("/fapi/v1/klines", params=params)
+                r = await client.get("/fapi/v1/klines", params=params)
             r.raise_for_status()
         return [{"open_time": int(k[0]), "open": float(k[1]), "high": float(k[2]),
                  "low": float(k[3]), "close": float(k[4]), "volume": float(k[5])}
                 for k in r.json()]
+
+    async def klines(self, symbol: str, interval: str | None = None, limit: int = 160) -> list[dict]:
+        return await self._klines(
+            self._client, symbol, interval or SETTINGS["timeframe"], limit,
+        )
 
     def _track_outcomes(self, price_map: dict[str, dict], candles_map: dict[str, list[dict]]):
         """Проверяет TP/SL только по цене после входа.
@@ -436,12 +467,14 @@ class Scanner:
             async def one(symbol):
                 try:
                     candles = await self.klines(symbol)
+                    hourly_candles = await self.klines(symbol, "1h", 80)
                 except Exception:
                     return symbol, None, None
+                trend = hourly_trend(hourly_candles)
                 sig = None
                 closed = closed_only(candles)
                 for st in styles:
-                    sig = evaluate(symbol, closed, st)
+                    sig = evaluate(symbol, closed, st, trend)
                     if sig:
                         break
                 return symbol, candles, sig
@@ -495,7 +528,8 @@ class Scanner:
             candles = [{"open_time": int(k[0]), "open": float(k[1]), "high": float(k[2]),
                         "low": float(k[3]), "close": float(k[4]), "volume": float(k[5])}
                        for k in r.json()]
-            return candles, float(t.json()["price"])
+            hourly = await self._klines(client, symbol, "1h", 80)
+            return candles, float(t.json()["price"]), hourly_trend(hourly)
         finally:
             if own:
                 await client.aclose()
@@ -524,7 +558,7 @@ def _check(verdict: str, title: str, reasons: list[str], price: float,
     }
 
 
-def assess_signal(signal: dict, candles: list[dict], last: float) -> dict:
+def assess_signal(signal: dict, candles: list[dict], last: float, hourly: str | None = None) -> dict:
     """Свежая проверка: уровни уже задеты, тезис жив, от текущей цены ещё есть смысл входа."""
     now = time.time()
     hi = max(float(signal.get("path_high", signal["entry"])), last)
@@ -655,6 +689,23 @@ def assess_signal(signal: dict, candles: list[dict], last: float) -> dict:
             reasons.append(f"R:R 1:{rr_now:.2f} ниже порога 1:{cfg['min_rr']}.")
         else:
             reasons.append(f"R:R 1:{rr_now:.2f} проходит порог 1:{cfg['min_rr']}.")
+
+    limit = float(SETTINGS.get("max_sl_pct") or 3)
+    signal_stop = float(signal.get("sl_pct") or 0)
+    if signal_stop > limit:
+        ok = False
+        reasons.append(f"Стоп сигнала {signal_stop:.2f}% цены шире предела {limit:g}%.")
+
+    if side == "LONG" and hourly != "up":
+        ok = False
+        reasons.append("Часовой тренд больше не вверх: EMA20 не выше EMA50.")
+    elif side == "SHORT" and hourly != "down":
+        ok = False
+        reasons.append("Часовой тренд больше не вниз: EMA20 не ниже EMA50.")
+    elif side == "LONG":
+        reasons.append("Часовой тренд всё ещё вверх.")
+    else:
+        reasons.append("Часовой тренд всё ещё вниз.")
 
     title = "Можно открывать" if ok else "Сейчас лучше не открывать"
     return _check("open" if ok else "skip", title, reasons, last, rr_now, now)
@@ -795,12 +846,12 @@ async def refresh_signal(signal_id: str):
     if signal["status"] != "active":
         return signal
     try:
-        candles, last = await scanner.quote(signal["symbol"])
+        candles, last, hourly = await scanner.quote(signal["symbol"])
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"Биржа не ответила: {exc}") from exc
     if signal["status"] != "active":
         return signal
-    check = assess_signal(signal, candles, last)
+    check = assess_signal(signal, candles, last, hourly)
     close_as = check.pop("close", None)
     if close_as:
         scanner._close(signal, close_as, time.time(), last)
@@ -836,6 +887,7 @@ class SettingsPatch(BaseModel):
     auto_profit_close_pct: float | None = None
     auto_tp_path_pct: float | None = None
     auto_reverse: bool | None = None
+    max_sl_pct: float | None = None
 
 
 @app.put("/api/settings")
@@ -871,6 +923,8 @@ async def put_settings(patch: SettingsPatch):
         data["auto_tp_path_pct"] = max(10.0, min(100.0, round(float(data["auto_tp_path_pct"]), 1)))
     if "auto_reverse" in data:
         data["auto_reverse"] = bool(data["auto_reverse"])
+    if "max_sl_pct" in data:
+        data["max_sl_pct"] = max(0.5, min(10.0, round(float(data["max_sl_pct"]), 2)))
     SETTINGS.update(data)
     save_settings(SETTINGS)
     if SETTINGS.get("auto_trade"):

@@ -20,7 +20,7 @@ const STYLES = [
   {
     id: 'conservative',
     name: 'Консервативный',
-    desc: 'Вход по тренду после отката. Меньше сигналов, выше надёжность. Рекомендуется новичкам.',
+    desc: 'Вход по тренду после отката к EMA20. Лонг только если часовая EMA20 выше EMA50, шорт — если ниже.',
   },
   {
     id: 'aggressive',
@@ -45,6 +45,7 @@ function withAuto(settings: Settings): Settings {
     auto_profit_close_pct: settings.auto_profit_close_pct ?? 30,
     auto_tp_path_pct: settings.auto_tp_path_pct ?? 50,
     auto_reverse: settings.auto_reverse ?? false,
+    max_sl_pct: settings.max_sl_pct ?? 3,
   }
 }
 
@@ -342,7 +343,7 @@ export default function SettingsPanel({
             <h3 className="mb-4 font-semibold">
               {st === 'conservative' ? 'Консервативный стиль' : 'Агрессивный стиль'}
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                тейк и стоп считаются от ATR (волатильности)
+                тейк и стоп считаются от ATR. Если стоп шире {draft.max_sl_pct}% цены, сигнала не будет.
               </span>
             </h3>
             <div className="grid gap-4 md:grid-cols-3">

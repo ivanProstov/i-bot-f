@@ -646,6 +646,13 @@ class AutoBook:
                 continue
             if int(signal.get("confidence") or 0) < minimum:
                 continue
+            stop_limit = float(settings.get("max_sl_pct") or 3)
+            if float(signal.get("sl_pct") or 0) > stop_limit:
+                self._remember_skip(
+                    signal, leverage, pct,
+                    f"Стоп сигнала шире {stop_limit:g}% цены",
+                )
+                continue
             if any(row.get("symbol") == signal["symbol"] and row.get("status") == "open" for row in self.trades):
                 self._remember_skip(signal, leverage, pct, "По этой паре автосделка уже открыта")
                 continue
